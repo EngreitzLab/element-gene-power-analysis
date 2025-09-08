@@ -33,11 +33,11 @@ rule split_target_response_pairs:
     output:
         splits=expand(
             "results/{{sample}}/pair_splits/gene_grna_group_pairs_{split}.txt",
-            split=range(1, config["power_analysis"]["num_batches"] + 1),
+            split=range(1, batches + 1),
         ),
         # Default to 100 splits - this only works if every dataset has more than 100 genes, which is true (error will be thrown if not)
     params:
-        batches=N_BATCHES,
+        batches=config["num_batches"],
     log:
         "results/{sample}/logs/split_target_response_pairs.log",
     conda:
@@ -89,10 +89,12 @@ rule combine_sceptre_power_analysis:
     input:
         splits=expand(
             "results/{{sample}}/power_analysis/effect_size_{{effect_size}}/power_analysis_output_{split}.tsv",
-            split=range(1, config["power_analysis"]["num_batches"] + 1),
+            split=range(1, batches + 1),
         ),
     output:
         combined_power_analysis_output="results/{sample}/power_analysis/combined_power_analysis_output_es_{effect_size}.tsv",
+    params:
+        batches=config["num_batches"],
     log:
         "results/logs/{sample}/combine_sceptre_power_analysis_es_{effect_size}.log",
     conda:
