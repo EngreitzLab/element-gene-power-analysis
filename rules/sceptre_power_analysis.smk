@@ -31,9 +31,9 @@ rule split_target_response_pairs:
     input:
         gene_grna_group_pairs="results/{sample}/gene_grna_group_pairs.rds",
     output:
-        splits=lambda wildcards: [
-            f"results/{wildcards.sample}/pair_splits/gene_grna_group_pairs_{split}.txt"
-            for split in range(1, config["num_batches"] + 1)
+        splits=[
+            "results/{sample}/pair_splits/gene_grna_group_pairs_{split}.txt".format(split=i)
+            for i in range(1, config["num_batches"] + 1)
         ],
         # Default to 100 splits - this only works if every dataset has more than 100 genes, which is true (error will be thrown if not)
     params:
