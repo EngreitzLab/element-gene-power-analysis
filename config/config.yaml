@@ -1,0 +1,13 @@
+# Configuration file to run the example data.
+samples:
+  - test_data
+
+effect_sizes:
+  - 0.15
+  - 0.2
+
+# Parameters for the power analysis
+power_analysis:
+  num_replicates: 100
+  num_batches: 10
+  reps: 20
