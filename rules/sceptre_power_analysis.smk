@@ -31,10 +31,10 @@ rule split_target_response_pairs:
     input:
         gene_grna_group_pairs="results/{sample}/gene_grna_group_pairs.rds",
     output:
-        splits=expand(
-            "results/{sample}/pair_splits/gene_grna_group_pairs_{split}.txt",
-            split=range(1, config["num_batches"] + 1),
-        ),
+        splits=lambda wildcards: [
+            f"results/{wildcards.sample}/pair_splits/gene_grna_group_pairs_{split}.txt"
+            for split in range(1, config["num_batches"] + 1)
+        ],
         # Default to 100 splits - this only works if every dataset has more than 100 genes, which is true (error will be thrown if not)
     params:
         batches=config["num_batches"],
@@ -87,10 +87,10 @@ rule create_sce:
 # Combine the split outputs of the power analysis
 rule combine_sceptre_power_analysis:
     input:
-        splits=expand(
-            "results/{{sample}}/power_analysis/effect_size_{{effect_size}}/power_analysis_output_{split}.tsv",
-            split=range(1, config["num_batches"] + 1),
-        ),
+        splits=lambda wildcards: [
+            f"results/{wildcards.sample}/power_analysis/effect_size_{wildcards.effect_size}/power_analysis_output_{split}.tsv"
+            for split in range(1, config["num_batches"] + 1)
+        ],
     output:
         combined_power_analysis_output="results/{sample}/power_analysis/combined_power_analysis_output_es_{effect_size}.tsv",
     log:
