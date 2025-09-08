@@ -1,2 +1,2 @@
 # element-gene-power-analysis
-“Power and sample-size analysis for detecting element–gene links (SCEPTRE-based); estimates per-pair power and expected discoveries at a target FDR.”
+“This repository implements a SCEPTRE-based power analysis that tests element–gene pairs in single-cell CRISPR screens, returning per-pair power, expected discoveries, and minimal sample sizes given effect sizes, detection rates, and α/FDR.”
