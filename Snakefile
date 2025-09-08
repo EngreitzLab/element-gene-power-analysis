@@ -7,5 +7,8 @@ include: "rules/sceptre_power_analysis.smk"
 # Perform all analyses to output benchmarked datasets
 rule all:
   input:
-    # Expand will create a list of all combinations of samples and effect sizes
-    expand("results/{{sample}}/power_analysis/combined_power_analysis_output_es_{{effect_size}}.tsv", sample=config["samples"], effect_size=config["effect_sizes"])
+    expand(
+      "results/{sample}/power_analysis/combined_power_analysis_output_es_{effect_size}.tsv",
+      sample=config["samples"],
+      effect_size=config["effect_sizes"]
+    )
