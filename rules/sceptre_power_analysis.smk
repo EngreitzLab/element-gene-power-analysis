@@ -11,7 +11,7 @@ rule sceptre_power_analysis:
     output:
         power_analysis_output="results/{sample}/power_analysis/effect_size_{effect_size}/power_analysis_output_{split}.tsv",
     params:
-        reps=config["power_analysis"]["num_replicates"],
+        reps=config["num_replicates"],
     log:
         "results/logs/{sample}/sceptre_power_analysis_es_{effect_size}_split{split}.log",
     conda:
@@ -24,7 +24,7 @@ rule sceptre_power_analysis:
 
 
 # Create and split the discovery pairs file
-# N_BATCHES = config["power_analysis"]["num_batches"]
+# N_BATCHES = config["num_batches"]
 
 
 rule split_target_response_pairs:
