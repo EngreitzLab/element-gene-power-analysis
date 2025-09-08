@@ -5,7 +5,7 @@
 rule sceptre_power_analysis:
     input:
         gene_grna_group_pairs_split="results/{sample}/pair_splits/gene_grna_group_pairs_{split}.txt",
-        final_sceptre_object="results/{sample}/differential_expression/final_sceptre_object.rds",
+        final_sceptre_object="results/{sample}/final_sceptre_object.rds",
         grna_groups_table="results/{sample}/grna_groups_table.rds",
         perturb_sce="results/{sample}/perturb_sce.rds",
     output:
@@ -47,21 +47,21 @@ rule split_target_response_pairs:
 
 
 # Run sceptre differential expression with "union"
-rule sceptre_differential_expression:
-    input:
-        sceptre_diffex_input="results/{sample}/sceptre_diffex_input.rds",
-    output:
-        discovery_results="results/{sample}/results_run_discovery_analysis.rds",
-        final_sceptre_object="results/{sample}/final_sceptre_object.rds",
-    log:
-        "results/logs/{sample}/sceptre_differential_expression.log",
-    conda:
-        "../envs/power_analysis.yml"
-    resources:
-        mem="32G",
-        time="12:00:00",
-    script:
-        "../R/sceptre_differential_expression.R"
+# rule sceptre_differential_expression:
+#     input:
+#         sceptre_diffex_input="results/{sample}/sceptre_diffex_input.rds",
+#     output:
+#         discovery_results="results/{sample}/results_run_discovery_analysis.rds",
+#         final_sceptre_object="results/{sample}/final_sceptre_object.rds",
+#     log:
+#         "results/logs/{sample}/sceptre_differential_expression.log",
+#     conda:
+#         "../envs/power_analysis.yml"
+#     resources:
+#         mem="32G",
+#         time="12:00:00",
+#     script:
+#         "../R/sceptre_differential_expression.R"
 
 
 # Create the sce object from sceptre object for simulations
@@ -105,7 +105,7 @@ rule combine_sceptre_power_analysis:
 rule compute_power_from_simulations:
     input:
         combined_power_analysis_output="results/{sample}/power_analysis/combined_power_analysis_output_es_{effect_size}.tsv",
-        discovery_results="results/{sample}/differential_expression/results_run_discovery_analysis.rds",
+        discovery_results="results/{sample}/results_run_discovery_analysis.rds",
     output:
         power_analysis_results="results/{sample}/power_analysis/power_analysis_results_es_{effect_size}.tsv",
     log:
