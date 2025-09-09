@@ -23,7 +23,7 @@ suppressPackageStartupMessages(
 )
 
 message("Loading inputs")
-gene_gRNA_group_pairs <- readRDS(snakemake@input$gene_gRNA_group_pairs)
+gene_grna_group_pairs <- readRDS(snakemake@input$gene_grna_group_pairs)
 batches <- snakemake@params$batches  # Get number of batches from snakemake params
 output_files <- snakemake@output$splits
 
@@ -32,7 +32,7 @@ output_files <- snakemake@output$splits
 
 # Calculate the target number of unique grna_group for each split
 message("Precomputations for splitting pairs")
-total_unique_groups <- n_distinct(gene_gRNA_group_pairs$grna_target)
+total_unique_groups <- n_distinct(gene_grna_group_pairs$grna_target)
 target_per_split <- ceiling(total_unique_groups / batches)
 
 # Make sure that splitting the unique groups will work given the number of batches
@@ -48,14 +48,14 @@ for (i in seq_len(batches)) {
 }
 
 # Distribute grna_target to splits trying to even out the number of unique values
-message("Distributing gene-gRNA group pairs")
-unique_targets <- unique(gene_gRNA_group_pairs$grna_target)
+message("Distributing gene-grna group pairs")
+unique_targets <- unique(gene_grna_group_pairs$grna_target)
 for (i in seq_along(unique_targets)) {
   split_counts <- sapply(splits, function(x) n_distinct(x$grna_target))
   split_with_least <- which.min(split_counts)
   
   # Get the rows for the current grna_target
-  current_rows <- gene_gRNA_group_pairs %>% 
+  current_rows <- gene_grna_group_pairs %>% 
     filter(grna_target == unique_targets[i])
   
   # Add the current rows to the appropriate split
