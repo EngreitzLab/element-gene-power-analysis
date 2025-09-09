@@ -40,8 +40,8 @@ n_ctrl <- FALSE
 
 # Read in the "guide_file"
 final_sceptre_object <- readRDS(snakemake@input$final_sceptre_object)
-discovery_pairs_split <- read_tsv(snakemake@input$gene_gRNA_group_pairs_split, col_names = c("grna_group", "response_id"))
-gRNA_groups_table <- readRDS(snakemake@input$gRNA_groups_table)
+discovery_pairs_split <- read_tsv(snakemake@input$gene_grna_group_pairs_split, col_names = c("grna_group", "response_id"))
+grna_groups_table <- readRDS(snakemake@input$grna_groups_table)
 sce <- readRDS(snakemake@input$perturb_sce)
 
 
@@ -64,7 +64,7 @@ for (pert in perts){
   discovery_relevant_pairs_pert <- discovery_pairs_which_pass_qc[discovery_pairs_which_pass_qc$grna_group == pert,]
   
   # Get all the guides that target the current `pert`
-  pert_guides <- gRNA_groups_table %>%
+  pert_guides <- grna_groups_table %>%
     filter(grna_target == pert) %>%
     pull(grna_id)  
   
@@ -77,7 +77,7 @@ for (pert in perts){
     pert_object <- pert_input(pert, sce = sce, pert_level = "cre_perts")
   } 
   
-  # get perturbation status and gRNA perturbations for all cells
+  # get perturbation status and grna perturbations for all cells
   pert_status <- colData(pert_object)$pert
   grna_perts <- assay(altExp(pert_object, "grna_perts"), "perts")
   # Convert to a sparse matrix, so the sampling function works in `create_guide_pert_status`
