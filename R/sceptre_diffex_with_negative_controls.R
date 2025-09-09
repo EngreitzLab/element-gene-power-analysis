@@ -17,11 +17,13 @@ sink(log, type = "message")
 
 ### LOADING FILES =============================================================
 
-# Download Sceptre
-# library(devtools)
-# message("Installing Sceptre")
-# devtools::install_github("katsevich-lab/sceptre")
-# message("Sceptre Installation Complete")
+if (!require("sceptre", quietly = TRUE)){
+  install.packages("BiocManager")
+  library(devtools)
+  message("Installing sceptre from GitHub...")
+  devtools::install_github("katsevich-lab/sceptre")
+  message("Sceptre installation complete.")
+}
 
 message("Loading in packages")
 suppressPackageStartupMessages({

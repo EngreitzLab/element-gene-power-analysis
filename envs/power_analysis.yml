@@ -11,6 +11,7 @@ dependencies:
   - bioconductor-biobase=2.54.0=r41hc0cfd56_2
   - bioconductor-biocgenerics=0.40.0=r41hdfd78af_0
   - bioconductor-DESeq2
+  - r-devtools
   - bioconductor-delayedarray=0.20.0=r41hc0cfd56_2
   - bioconductor-genomeinfodb=1.30.1=r41hdfd78af_0
   - bioconductor-genomeinfodbdata=1.2.7=r41hdfd78af_2
