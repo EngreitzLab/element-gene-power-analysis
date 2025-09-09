@@ -33,8 +33,8 @@ suppressPackageStartupMessages({
 
 message("Loading input files")
 sceptre_object <- readRDS(snakemake@input$sceptre_diffex_input)
-gene_gRNA_group_pairs <- readRDS(snakemake@input$gene_gRNA_group_pairs)
-gRNA_groups_table <- readRDS(snakemake@input$gRNA_groups_table)
+gene_grna_group_pairs <- readRDS(snakemake@input$gene_grna_group_pairs)
+grna_groups_table <- readRDS(snakemake@input$grna_groups_table)
 negative_control_genes <- as.vector(snakemake@params$negative_control_genes)
 features <- read_tsv(snakemake@input$features, col_names = FALSE) %>% filter(X3 == "Gene Expression")
 
@@ -47,7 +47,7 @@ print(neg_control_genes_not_represented)
 negative_control_genes <- setdiff(negative_control_genes, neg_control_genes_not_represented)
 
 # For each negative control gene, match the gene up with each target
-targets <- setdiff(unique(gRNA_groups_table$grna_target), "non-targeting") # Remove non-targeting
+targets <- setdiff(unique(grna_groups_table$grna_target), "non-targeting") # Remove non-targeting
 neg_control_gene_target_pairs <- expand.grid(grna_target = targets, response_id = negative_control_genes)
 
 # Then convert the gene names to ensemble ids
@@ -56,8 +56,8 @@ neg_control_gene_id_target_pairs <- neg_control_gene_target_pairs %>%
   select(grna_target, X1) %>%
   dplyr::rename(response_id = X1)
 
-# Then add to gene_gRNA_group_pairs and remove duplicates
-all_pairs <- rbind(gene_gRNA_group_pairs, neg_control_gene_id_target_pairs)
+# Then add to gene_grna_group_pairs and remove duplicates
+all_pairs <- rbind(gene_grna_group_pairs, neg_control_gene_id_target_pairs)
 all_pairs <- unique(all_pairs)
 
 
