@@ -1,11 +1,10 @@
 # Configuration file to run the example data.
 samples:
   - sample1
-  - sample2
 
 effect_sizes:
+  - 0.15
   - 0.2
-  - 0.5
 
 # Parameters for the power analysis
 num_replicates: 100
