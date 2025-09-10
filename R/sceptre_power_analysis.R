@@ -18,7 +18,6 @@ sink(log, type = "message")
 ### LOADING PACKAGES ==========================================================
 
 if (!require("sceptre", quietly = TRUE)){
-  install.packages("BiocManager")
   library(devtools)
   message("Installing sceptre from GitHub...")
   devtools::install_github("katsevich-lab/sceptre")
