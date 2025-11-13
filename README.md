@@ -16,4 +16,25 @@ Folder structure and file requirements:
     - `gene_grna_group_pairs.rds`
 
 
+
+Example of `grna_groups_table.rds`
+```R
+                    grna_id          grna_target
+1  240905-HPC-screen-guide-1 chr1:7885554-7885848
+2 240905-HPC-screen-guide-10 chr1:7885554-7885848
+3 240905-HPC-screen-guide-11 chr1:7885554-7885848
+```
+
+
+Example of `gene_grna_group_pairs.rds`
+```R
+   grna_target        response_id
+1 chr1:7885554-7885848 ENSG00000116288.13
+2 chr1:7902783-7902990 ENSG00000116288.13
+3 chr1:7913116-7913357 ENSG00000116288.13
+```
+
+
+
+
 `config/config.yaml` needs to be filled with the appropriate parameters.
