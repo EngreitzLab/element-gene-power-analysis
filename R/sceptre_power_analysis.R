@@ -15,16 +15,18 @@ sink(log)
 sink(log, type = "message")
 
 
-### LOADING PACKAGES ==========================================================
+# Installing sceptre that cannot be installed with conda
 
-if (!require("sceptre", quietly = TRUE)){
-  library(devtools)
-  message("Installing sceptre from GitHub...")
-  devtools::install_github("katsevich-lab/sceptre")
+if (!requireNamespace("sceptre", quietly = TRUE)) {
+  if (!requireNamespace("remotes", quietly = TRUE)) {
+    stop("R package 'remotes' is required to install sceptre from GitHub but is not installed.")
+  }
+  message("Installing sceptre from GitHub (katsevich-lab/sceptre)...")
+  remotes::install_github("katsevich-lab/sceptre", upgrade = "never", dependencies = TRUE)
   message("Sceptre installation complete.")
 }
 
-
+### LOADING PACKAGES ==========================================================
 message("Loading in packages")
 suppressPackageStartupMessages({
   library(SingleCellExperiment)

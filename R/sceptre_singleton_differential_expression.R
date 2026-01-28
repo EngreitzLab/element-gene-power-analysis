@@ -14,9 +14,18 @@ log <- file(log_filename, open = "wt")
 sink(log)
 sink(log, type = "message")
 
+# Installing sceptre that cannot be installed with conda
+
+if (!requireNamespace("sceptre", quietly = TRUE)) {
+  if (!requireNamespace("remotes", quietly = TRUE)) {
+    stop("R package 'remotes' is required to install sceptre from GitHub but is not installed.")
+  }
+  message("Installing sceptre from GitHub (katsevich-lab/sceptre)...")
+  remotes::install_github("katsevich-lab/sceptre", upgrade = "never", dependencies = TRUE)
+  message("Sceptre installation complete.")
+}
 
 ### LOADING FILES =============================================================
-
 message("Loading in packages")
 suppressPackageStartupMessages({
   library(tidyverse)
