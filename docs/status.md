@@ -96,7 +96,9 @@ Needed to size cluster runs. Measured, not estimated. The right-hand column is S
 | Perturbed cells per pair | median 396 (IQR 195–542, max 1,927) | |
 | Discovery p-value threshold | 7.71404 × 10⁻⁴ | |
 | One `run_discovery_analysis()` call | 3.4–4.8s | **~9.7s** |
-| Cost model, per (target, replicate) | — | **4.91s + 0.459s × pairs** (R² = 0.968, 36 targets) |
+| Cost model, per (target, replicate) | — | **4.91s + 0.459s × pairs** (R² = 0.968, 36 targets); **3.66s + 0.512s × pairs** when the per-target setup is timed separately |
+| Per-target setup, once | — | **2.8–3.0s** (0.03s per replicate at 100 reps) |
+| Where a call spends its time | — | **`glm.fit` 59 %** (the per-gene null model), `rnbinom` 7 % — see the null-model section |
 | **Total at 100 replicates** | ~295 CPU-h per effect size | **~858 CPU-h per effect size** |
 | Peak RAM, simulation task | 1.5 GB → request 4 GB | ~1.9 GB heap → 8 GB requested |
 | Peak RAM, `prepare_sim_input.R` | 7.7 GB → request 12 GB | 16 GB requested, ~70s |
@@ -117,8 +119,8 @@ Both ran 100 replicates on the same dataset, so this is like for like. The CPU w
 wall-clock win is mostly the unthrottled array rather than the code.
 
 **48 % of the cost is the per-target term** — one `run_discovery_analysis()` call carries the full
-586,309-cell bookkeeping however few gene pairs ride along, and targets cannot be merged because
-perturbation status differs per target. Consequences worth internalising before optimising:
+586,309-cell bookkeeping however few gene pairs ride along. Targets can only share a call when their
+gene sets are disjoint, which is Step 9 below. Consequences worth internalising before optimising:
 
 - Halving the *pairs* saves ~26 %, not 50 %. Halving the *replicates* saves exactly 50 %.
 - Filtering pairs for a second pass is much dearer than it looks: the 4,322 pairs whose interval
@@ -127,6 +129,46 @@ perturbation status differs per target. Consequences worth internalising before 
 - Effect sizes cost the same as each other. A six-point sweep is six times the table above
   (~5,100 CPU-h), but the 2,900-task QOS budget still allows one wave: 480 splits × 6 effect sizes
   = 2,880 tasks, ~1h50m each, so ~2 h wall clock.
+
+---
+
+## Unresolved — which per-gene null model does the simulation test against?
+
+Found while profiling, not yet settled, and it bears on every power number rather than on
+performance. **Read this before trusting a power estimate to two decimal places.**
+
+Before testing any pair, sceptre fits a Poisson GLM of the gene's counts on the cell covariates
+(`perform_response_precomputation`, `precomputation_functions.R:13`) — the null model the perturbed
+cells are compared against. It **skips that fit when `@response_precomputations` already holds an
+entry for the `response_id`** (`medium_level_functs_v2.R:63`, reached because
+`run_outer_regression <- calibration_check || control_group_complement` and our
+`control_group_complement` is `TRUE`).
+
+Two measured facts follow:
+
+- That fit is **59 % of the total call time** — `glm.fit` is 27 % self / 59 % total under `Rprof`,
+  against 7 % for our own `rnbinom` draws. It is the single largest cost in the pipeline.
+- `sceptre_template.rds` **inherits 272 precomputations from the real discovery analysis, and they
+  cover all 237 genes that have QC-passing pairs — none are refitted.** So every simulated count is
+  tested against coefficients fitted to *real* counts. Measured directly by job `38854980`: 237 of
+  237 present, 0 absent. The bias is therefore uniform rather than mixed across genes, which is
+  easier to reason about but no more correct — a faithful emulation fits its null model on the data
+  it is given, and the real analysis did exactly that.
+
+It is not a rounding-level choice. Swapping the cache contents on one target moved p-values by up to
+0.94 with a Spearman correlation of 0.22 — the resulting power numbers would be materially different.
+
+Job `38854980` measures three explicit configurations to settle it: `as_is` (the inherited real-data
+cache, today's behaviour), `cleared` (refit on the simulated counts — the faithful reference), and
+`null_fit` (fitted once on a null simulation of the same replicate, then reused). It reports how many
+of the 237 tested genes the inherited cache even covers, how far the inherited coefficients sit from a
+fresh fit, and the p-value agreement between the three. **Verdict pending.**
+
+Note the pre-refactor pipeline inherited the same cache, so the old-vs-new comparison is unaffected —
+the question is whether *both* are right. If `cleared` is the correct reference, the fix is cheap
+(clear the slot in `prepare_sim_input.R`) but it makes every call ~2.4× dearer, and the `null_fit`
+option then becomes the way to buy the cost back: fit once per (gene, replicate) on simulated counts
+and reuse across the ~147 targets a gene pairs with.
 
 ---
 
@@ -159,6 +201,30 @@ Notes for whoever builds it:
 - Removing `Snakefile`, `rules/` and `R/` belongs to this step. That also turns `pixi run lint`
   green: it currently flags exactly those legacy files.
 
+#### Why not sceptre's own Nextflow pipeline
+
+sceptre now ships one (`timothy-barry/sceptre-pipeline`). It is the right tool for a **real**
+discovery analysis and the wrong one for a power simulation. Evaluated against a clone of it:
+
+- **It requires ondisc matrices.** Every script calls
+  `read_ondisc_backed_sceptre_object(sceptre_object_fp, response_odm_fp, grna_odm_fp)`, with no
+  in-memory path. Using it would mean serialising each simulated matrix to ODM.
+- **The simulation needs one object per gene-disjoint batch, not one per replicate** — the same
+  constraint as Step 9, since a gene is paired with ~147 targets. That is 100 × 300 = 30,000 objects
+  for one effect size, each needing its own ODM.
+- **It re-runs everything upstream per object.** The workflow is `set_analysis_parameters ->
+  prepare_assign_grnas -> assign_grnas -> combine -> run_qc -> prepare -> analysis`, unconditionally;
+  `pipeline_stop` truncates the tail but cannot skip the head. gRNA assignment alone is 43,432 gRNAs
+  at their own `2s`/gRNA heuristic, ~24 CPU-hours per object, none of it dependent on the simulated
+  response matrix.
+- **Its `0.05s` per pair is a walltime heuristic, not a benchmark** — `run_association_analysis_time_per_pair`,
+  used to size `--time`. It is not comparable to our measured per-pair cost.
+
+What is worth taking from it: `prepare_association_analyses.R` sorts pairs by `response_id` and pods
+on that key, so all ~147 pairs of a gene share one `@response_precomputations` entry — one GLM fit
+serving 147 tests. That is the same insight as Step 9 (pool more pairs per call) and it is what led to
+the null-model question above.
+
 ### Step 8 — tests and comparisons
 
 1. **Unit tests** (`testthat`, `pixi run test`) for the pure functions: `center_effect_size_matrix`
@@ -171,10 +237,202 @@ Notes for whoever builds it:
    [Choosing num_replicates]({{ site.baseurl }}{% link choosing-num-replicates.md %}) but not
    orchestrated. The scripts already support it through `--rep-offset`.
 
+### Step 9 — batch gene-disjoint targets into one sceptre call
+
+Not started, and the largest single saving left on the table: **up to 1.8×**, worth about 370
+CPU-hours per effect size. Costed below because the reasoning is easy to get wrong in both
+directions.
+
+**Where the cost is.** The unit of work is one `run_discovery_analysis()` call per (target,
+replicate) — 3,026 × 100 = **302,600 calls per effect size** — and each one carries the full
+586,309-cell setup regardless of how few gene pairs it covers. That per-call term is 4.91s of the
+`4.91s + 0.459s × pairs` model, so it is 413 of the 858 CPU-hours: **half the bill is setup paid
+and over**.
+
+**Why the obvious fix does not work.** The tempting version is one simulated object per replicate
+covering all 34,886 pairs, so the setup is paid 100 times instead of 302,600. It is not valid. Each
+gene is paired with **147 targets on average, up to 299** — only 10 of 237 genes belong to a single
+target — and pair (A, g) needs gene g knocked down in A's perturbed cells while pair (B, g) needs it
+knocked down in B's. One response matrix cannot hold both. Applying every knockdown at once puts
+B-perturbed cells, also knocked down, into A's control group, which shrinks the contrast and
+**understates power**. The pre-refactor pipeline was per-target for the same reason; this is not an
+artifact of the refactor.
+
+**What does work.** Two targets can share a call whenever their gene sets are disjoint, because a
+knockdown on gene `gA` never touches gene `gB`'s row. Cell overlap is fine: a cell with gRNAs for
+both A and B is in each one's treatment group for its own gene, and unmodified for the other's.
+Greedy first-fit over the real pair table gives **300 batches**, against a lower bound of 299 forced
+by the gene that appears in 299 targets — so greedy is essentially optimal here.
+
+| | Now | Gene-disjoint batches |
+|---|---:|---:|
+| sceptre calls per effect size | 302,600 | **30,000** (300 batches × 100 reps) |
+| Per-call overhead | 413 CPU-h | **41 CPU-h** |
+| Per-pair work (`rnbinom` draws) | 445 CPU-h | 445 CPU-h |
+| **Total** | **858** | **486 CPU-h — 1.77×** |
+
+Batches hold at most 31 targets, 194 pairs and 194 of the 237 genes.
+
+**The per-pair term does not move, and that bounds the win.** Gene `g` is still simulated once for
+every target it pairs with, so the total `rnbinom` volume is unchanged. This is 1.8×, not the
+10× the call-count ratio suggests.
+
+**`parallel = TRUE` is a different question and probably not the lever.** sceptre's internal
+parallelism forks across pairs within a call; the array fan-out already provides that parallelism
+across nodes, without fork overhead and without pinning a replicate to one node's cores. It does not
+reduce the number of calls, which is where the waste is. Batching and who-schedules-the-parallelism
+are orthogonal.
+
+**Three things to check before building it.**
+
+1. **413 CPU-h was an upper bound, and profiling has since brought it down to ~308.** The 4.91s
+   intercept was fitted to the step 3 smoke test, which ran **2 replicates** per target, so the
+   per-target setup outside the replicate loop (`pert_input`, `create_guide_pert_status`,
+   `subset_genes` — `run_power_simulation.R` lines 163–188) was amortized over 2 reps, not 100.
+   Timing that setup separately puts it at **2.8–3.0s once per target**, i.e. 0.03s per replicate at
+   100 reps — negligible. Re-fitting the model on three profiled targets gives **3.66s + 0.512s ×
+   pairs**, so the genuinely recoverable per-call overhead is ~308 CPU-h and **Step 9's ceiling is
+   ~1.5×, not 1.77×**. The three-target fit is thin; the 100-replicate array will settle it.
+2. **Memory.** A 194-gene batch is 194 × 586,309 dense doubles ≈ 0.9 GB for the count matrix and as
+   much again for the effect-size matrix, against ~54 MB per target today. The 8 GB request may
+   hold but has not been tested.
+3. **Linearity.** The `0.459s` slope was fitted over 5–36 pairs per call. Batches carry up to
+   194, and sceptre's per-call cost has not been shown to stay linear that far out.
+
+**Shape of the change.** A batching function (first-fit over gene sets, ordered deterministically so
+layout is reproducible), the target loop in `run_power_simulation.R` iterating batches instead of
+single targets, and `split_pairs.R` splitting on batches, not targets. Seeds must stay derived
+from `(seed, target, rep, effect_size)` so results remain invariant to the batch layout, exactly as
+they are invariant to the split layout today — that invariance is also what makes the two designs
+directly comparable pair by pair.
+
 ### Step 10 — re-derive the environment
 
 The dependency list was written before the code was finished. Re-audit the finished scripts'
 `library()` and `::` calls and trim `pixi.toml` to match.
+
+### Step 11 — fit the power curve and run three effect sizes instead of six
+
+Prototyped in `bin/fit_power_curve.R`, validated on one dataset, not yet adopted. Halves the cost of
+a sweep (~2,575 CPU-hours at 100 replicates on this dataset) and makes the minimum detectable effect
+size continuous rather than snapped to whichever effect sizes were run.
+
+**The model is derived, not curve-fitted.** For a Wald-type test at a fixed threshold,
+
+```
+power(effect_size) = Phi(beta / SE - z),   beta = -log(1 - effect_size),  z = qnorm(1 - alpha)
+```
+
+`beta` is the effect on the scale the test works on, `SE` collects everything pair-specific
+(perturbed cells, expression, dispersion), and `z` is fixed by the discovery threshold and shared by
+every pair. On the probit scale that is a straight line through `-z` with slope `1/SE`: **one free
+parameter per pair**, so three effect sizes leave two degrees of freedom to *check* the fit rather
+than just enough to force it. `bin/fit_power_curve.R` fits it as a binomial GLM with a probit link,
+no intercept and `-z` as an offset — a GLM rather than least squares on `qnorm(power)` because 0/100
+and 100/100 still carry information about the slope, whereas `qnorm()` would be infinite there.
+
+**Validation.** Held-out test on `dc_tap_paper_wtc11_no_shuf`, which has a complete six-point sweep
+(0.05 / 0.1 / 0.15 / 0.2 / 0.25 / 0.5) over 6,574 pairs at 100 replicates. Fit on three of them,
+predict the other three, compare against what was measured:
+
+| Fit grid | pairs fitted | MAE (held out) | p90 error | noise floor | MDES exact | MDES ±1 step |
+|---|---:|---:|---:|---:|---:|---:|
+| 0.05 / 0.25 / 0.5 | 6,547 | 0.0488 | 0.126 | 0.0201 | 82.6 % | 98.0 % |
+| 0.05 / 0.1 / 0.15 | 6,405 | 0.0270 | 0.083 | 0.0067 | 82.7 % | 96.1 % |
+| 0.05 / 0.15 / 0.5 | 6,548 | 0.0338 | 0.104 | 0.0167 | 85.2 % | 98.3 % |
+| **0.05 / 0.1 / 0.25** | 6,477 | **0.0167** | **0.056** | 0.0104 | **89.0 %** | **99.2 %** |
+
+"Noise floor" is the mean binomial standard error of the measured value being compared against, so
+the best grid predicts held-out power to within about 1.6× the noise of simply measuring it, and
+reproduces the six-point sweep's minimum detectable effect size exactly for 89 % of pairs.
+
+Two supporting checks on the same data. The functional form holds: fitting per pair on all six
+points gives a probit-scale residual sd of 0.132 (median), against ~0.13 expected from
+100-replicate binomial noise alone at power 0.5 — the straight line fits as well as the data can
+distinguish. And **monotonicity holds**: of 32,870 consecutive-effect-size comparisons only 220
+(0.67 %) decrease, largest decrease 0.060, which is about one standard error of a difference.
+
+**Grid placement is dataset-specific and matters more than the number of points.** `wtc11` is well
+powered and transitions between 5 % and 15 %; `day0_grna20_no_shuffle` is not, and 84 % of its pairs
+transition between 5 % and 25 %. Projecting each `day0` pair's curve from its measured 0.15 power:
+
+| Grid | `day0` pairs with ≥1 point where power is 0.1–0.9 |
+|---|---:|
+| 5 / 25 / 50 | 26.3 % |
+| 5 / 15 / 50 | 60.4 % |
+| **10 / 20 / 35** | **100.0 %** |
+| 5 / 15 / 25 / 50 | 72.3 % |
+
+A one-parameter sigmoid is only well determined by points away from 0 and 1, so a grid that brackets
+the transition rather than sampling it wastes replicates. Pick the grid from a cheap pilot — one
+effect size at 30 replicates locates the transition distribution — rather than reusing another
+dataset's.
+
+**Open points before adopting it.**
+
+- **Validated on one dataset.** Repeat the held-out test on `day0` once its sweep exists; the two
+  datasets differ enough in power that the fit quality should not be assumed to transfer.
+- **`z` should come from the threshold, but did not match.** Fitting `z` per pair on `wtc11` gives a
+  median of 2.045, and the script's `--threshold-file` route would use `qnorm(1 - threshold)`. Where
+  those disagree, `--fit-z` profiles a single shared `z` by total deviance. Worth understanding why
+  they differ — sceptre's test is a conditional-resampling test with a skew-normal approximation,
+  not a Wald test, so some deviation is expected.
+- **Keep the raw per-effect-size power values.** The fitted curve is monotone by construction, so
+  the monotonicity check above is only meaningful on unfitted numbers.
+- **Low-count genes may plateau below power 1**, because the resampling p-value has a granularity
+  floor. A two-parameter version (`gamma * Phi(...)`) would cover that, but then three points leave
+  no slack for checking. `deviance / df` per pair, which the script reports, is the diagnostic.
+- **The deviance says the model is imperfect, even though it predicts well.** Running the prototype
+  on `wtc11` (fit 0.05 / 0.1 / 0.25, predict the rest) reproduces the held-out accuracy — MAE 0.0175
+  with `--fit-z`, 0.0156 with `z` fixed at 2.045 — but reports `deviance / df` of 2.4–2.7 (median,
+  90th percentile 8.2). The earlier probit-residual check missed this because it discarded saturated
+  points; the GLM includes them, and binomial deviance is very sensitive there. So the straight line
+  is *not* the true curve at the saturated ends, while still interpolating the transition to within
+  about 1.5× the Monte-Carlo noise. Use it for interpolation, not for extrapolation past the fitted
+  range, and treat a high `deviance / df` as "check this pair" rather than as a verdict on the pair.
+- Profiling `z` did slightly *worse* than fixing it (0.0175 against 0.0156), so `--fit-z` is a
+  diagnostic for whether the threshold and the curves agree, not the recommended default.
+- The MDES columns in the table above treat the measured six-point grid as truth. It is not: each
+  point carries ±0.05, so pairs near the 0.8 boundary flip grid steps easily. Some of the 11 %
+  disagreement is the measurement being wrong rather than the fit, which pools 300 draws.
+
+#### Predicting the curve from covariates instead of measuring it
+
+The obvious extension is to skip simulation altogether: the theory says
+`SE^2 ~ (1 / n_pert_cells) * (1 / mu + 1 / theta)`, so `k = 1 / SE` should be predictable from the
+perturbed-cell count and the gene's expression, both of which the pipeline already reports per pair.
+Regressing the fitted `k` on those two, over the 6,030 `wtc11` pairs with a usable fit:
+
+```
+log(k) = -0.605 + 0.502 * log(perturbed cells) + 0.351 * log(expression)
+                       theory: 0.500              theory: 0 to 0.5
+R^2 = 0.867      residual sd of log k = 0.243  ->  k predicted to within x1.28
+```
+
+The perturbed-cell exponent lands on 0.502 against a theoretical 0.5, so the `sqrt(n)` law is
+confirmed on real data. **It is still not a substitute for measurement where per-pair claims are
+concerned.** A x1.28 error in `k` is about ±0.20 in power near the middle of a pair's transition,
+against 0.017 for the per-pair curve fit above — and that error is model error, not sampling noise,
+so it does not shrink with more simulation and is likely concentrated in particular genes rather
+spread evenly. Certifying a negative on a prediction would mis-certify a non-random subset of pairs.
+
+Where it is the right tool:
+
+- **Design counterfactuals** — the power gained from twice the cells or more gRNAs per element.
+  Measurement cannot answer these at all.
+- **Aggregate statements**, where ±0.2 per pair averages down over thousands of pairs.
+- **Choosing the effect-size grid** without a pilot run, and deciding which pairs are worth
+  simulating.
+- **Pairs never tested** — the 1,564 that failed pairwise QC on `day0`, or a planned experiment.
+
+Note one trap in the numbers above: perturbed-cell count *alone* explains only 2.3 % of the variance
+while expression alone explains 83.7 %. That is not evidence that cell count is unimportant — its
+exponent is confirmed — but that it barely varies across pairs in this dataset. Causally important,
+empirically near-constant.
+
+The defensible per-pair version, if wanted, is to calibrate the residual quantiles on a measured
+subset and widen each pair's effect-size interval by them. That gives honest intervals, merely wider
+than measured ones — and quantifies what a measured sweep is buying.
 
 ---
 
