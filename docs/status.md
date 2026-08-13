@@ -244,6 +244,129 @@ directly comparable pair by pair.
 The dependency list was written before the code was finished. Re-audit the finished scripts'
 `library()` and `::` calls and trim `pixi.toml` to match.
 
+### Step 11 — fit the power curve and run three effect sizes instead of six
+
+Prototyped in `bin/fit_power_curve.R`, validated on one dataset, not yet adopted. Halves the cost of
+a sweep (~2,575 CPU-hours at 100 replicates on this dataset) and makes the minimum detectable effect
+size continuous rather than snapped to whichever effect sizes were run.
+
+**The model is derived, not curve-fitted.** For a Wald-type test at a fixed threshold,
+
+```
+power(effect_size) = Phi(beta / SE - z),   beta = -log(1 - effect_size),  z = qnorm(1 - alpha)
+```
+
+`beta` is the effect on the scale the test works on, `SE` collects everything pair-specific
+(perturbed cells, expression, dispersion), and `z` is fixed by the discovery threshold and shared by
+every pair. On the probit scale that is a straight line through `-z` with slope `1/SE`: **one free
+parameter per pair**, so three effect sizes leave two degrees of freedom to *check* the fit rather
+than just enough to force it. `bin/fit_power_curve.R` fits it as a binomial GLM with a probit link,
+no intercept and `-z` as an offset — a GLM rather than least squares on `qnorm(power)` because 0/100
+and 100/100 still carry information about the slope, whereas `qnorm()` would be infinite there.
+
+**Validation.** Held-out test on `dc_tap_paper_wtc11_no_shuf`, which has a complete six-point sweep
+(0.05 / 0.1 / 0.15 / 0.2 / 0.25 / 0.5) over 6,574 pairs at 100 replicates. Fit on three of them,
+predict the other three, compare against what was measured:
+
+| Fit grid | pairs fitted | MAE (held out) | p90 error | noise floor | MDES exact | MDES ±1 step |
+|---|---:|---:|---:|---:|---:|---:|
+| 0.05 / 0.25 / 0.5 | 6,547 | 0.0488 | 0.126 | 0.0201 | 82.6 % | 98.0 % |
+| 0.05 / 0.1 / 0.15 | 6,405 | 0.0270 | 0.083 | 0.0067 | 82.7 % | 96.1 % |
+| 0.05 / 0.15 / 0.5 | 6,548 | 0.0338 | 0.104 | 0.0167 | 85.2 % | 98.3 % |
+| **0.05 / 0.1 / 0.25** | 6,477 | **0.0167** | **0.056** | 0.0104 | **89.0 %** | **99.2 %** |
+
+"Noise floor" is the mean binomial standard error of the measured value being compared against, so
+the best grid predicts held-out power to within about 1.6× the noise of simply measuring it, and
+reproduces the six-point sweep's minimum detectable effect size exactly for 89 % of pairs.
+
+Two supporting checks on the same data. The functional form holds: fitting per pair on all six
+points gives a probit-scale residual sd of 0.132 (median), against ~0.13 expected from
+100-replicate binomial noise alone at power 0.5 — the straight line fits as well as the data can
+distinguish. And **monotonicity holds**: of 32,870 consecutive-effect-size comparisons only 220
+(0.67 %) decrease, largest decrease 0.060, which is about one standard error of a difference.
+
+**Grid placement is dataset-specific and matters more than the number of points.** `wtc11` is well
+powered and transitions between 5 % and 15 %; `day0_grna20_no_shuffle` is not, and 84 % of its pairs
+transition between 5 % and 25 %. Projecting each `day0` pair's curve from its measured 0.15 power:
+
+| Grid | `day0` pairs with ≥1 point where power is 0.1–0.9 |
+|---|---:|
+| 5 / 25 / 50 | 26.3 % |
+| 5 / 15 / 50 | 60.4 % |
+| **10 / 20 / 35** | **100.0 %** |
+| 5 / 15 / 25 / 50 | 72.3 % |
+
+A one-parameter sigmoid is only well determined by points away from 0 and 1, so a grid that brackets
+the transition rather than sampling it wastes replicates. Pick the grid from a cheap pilot — one
+effect size at 30 replicates locates the transition distribution — rather than reusing another
+dataset's.
+
+**Open points before adopting it.**
+
+- **Validated on one dataset.** Repeat the held-out test on `day0` once its sweep exists; the two
+  datasets differ enough in power that the fit quality should not be assumed to transfer.
+- **`z` should come from the threshold, but did not match.** Fitting `z` per pair on `wtc11` gives a
+  median of 2.045, and the script's `--threshold-file` route would use `qnorm(1 - threshold)`. Where
+  those disagree, `--fit-z` profiles a single shared `z` by total deviance. Worth understanding why
+  they differ — sceptre's test is a conditional-resampling test with a skew-normal approximation,
+  not a Wald test, so some deviation is expected.
+- **Keep the raw per-effect-size power values.** The fitted curve is monotone by construction, so
+  the monotonicity check above is only meaningful on unfitted numbers.
+- **Low-count genes may plateau below power 1**, because the resampling p-value has a granularity
+  floor. A two-parameter version (`gamma * Phi(...)`) would cover that, but then three points leave
+  no slack for checking. `deviance / df` per pair, which the script reports, is the diagnostic.
+- **The deviance says the model is imperfect, even though it predicts well.** Running the prototype
+  on `wtc11` (fit 0.05 / 0.1 / 0.25, predict the rest) reproduces the held-out accuracy — MAE 0.0175
+  with `--fit-z`, 0.0156 with `z` fixed at 2.045 — but reports `deviance / df` of 2.4–2.7 (median,
+  90th percentile 8.2). The earlier probit-residual check missed this because it discarded saturated
+  points; the GLM includes them, and binomial deviance is very sensitive there. So the straight line
+  is *not* the true curve at the saturated ends, while still interpolating the transition to within
+  about 1.5× the Monte-Carlo noise. Use it for interpolation, not for extrapolation past the fitted
+  range, and treat a high `deviance / df` as "check this pair" rather than as a verdict on the pair.
+- Profiling `z` did slightly *worse* than fixing it (0.0175 against 0.0156), so `--fit-z` is a
+  diagnostic for whether the threshold and the curves agree, not the recommended default.
+- The MDES columns in the table above treat the measured six-point grid as truth. It is not: each
+  point carries ±0.05, so pairs near the 0.8 boundary flip grid steps easily. Some of the 11 %
+  disagreement is the measurement being wrong rather than the fit, which pools 300 draws.
+
+#### Predicting the curve from covariates instead of measuring it
+
+The obvious extension is to skip simulation altogether: the theory says
+`SE^2 ~ (1 / n_pert_cells) * (1 / mu + 1 / theta)`, so `k = 1 / SE` should be predictable from the
+perturbed-cell count and the gene's expression, both of which the pipeline already reports per pair.
+Regressing the fitted `k` on those two, over the 6,030 `wtc11` pairs with a usable fit:
+
+```
+log(k) = -0.605 + 0.502 * log(perturbed cells) + 0.351 * log(expression)
+                       theory: 0.500              theory: 0 to 0.5
+R^2 = 0.867      residual sd of log k = 0.243  ->  k predicted to within x1.28
+```
+
+The perturbed-cell exponent lands on 0.502 against a theoretical 0.5, so the `sqrt(n)` law is
+confirmed on real data. **It is still not a substitute for measurement where per-pair claims are
+concerned.** A x1.28 error in `k` is about ±0.20 in power near the middle of a pair's transition,
+against 0.017 for the per-pair curve fit above — and that error is model error, not sampling noise,
+so it does not shrink with more simulation and is likely concentrated in particular genes rather
+spread evenly. Certifying a negative on a prediction would mis-certify a non-random subset of pairs.
+
+Where it is the right tool:
+
+- **Design counterfactuals** — the power gained from twice the cells or more gRNAs per element.
+  Measurement cannot answer these at all.
+- **Aggregate statements**, where ±0.2 per pair averages down over thousands of pairs.
+- **Choosing the effect-size grid** without a pilot run, and deciding which pairs are worth
+  simulating.
+- **Pairs never tested** — the 1,564 that failed pairwise QC on `day0`, or a planned experiment.
+
+Note one trap in the numbers above: perturbed-cell count *alone* explains only 2.3 % of the variance
+while expression alone explains 83.7 %. That is not evidence that cell count is unimportant — its
+exponent is confirmed — but that it barely varies across pairs in this dataset. Causally important,
+empirically near-constant.
+
+The defensible per-pair version, if wanted, is to calibrate the residual quantiles on a measured
+subset and widen each pair's effect-size interval by them. That gives honest intervals, merely wider
+than measured ones — and quantifies what a measured sweep is buying.
+
 ---
 
 ## Running the comparisons on the cluster
