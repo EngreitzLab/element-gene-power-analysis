@@ -13,7 +13,7 @@ nav_order: 6
 pixi install          # runtime environment from pixi.lock
 pixi run setup        # install sceptre from the pinned commit
 pixi run check-api    # verify the pin against the internals this pipeline uses
-pixi run lint         # formatting and convention checks
+pixi run lint         # formatting and convention checks (read-only)
 pixi run install-hooks
 ```
 
@@ -115,8 +115,11 @@ and **rejected** for things that cannot be fixed without changing meaning:
 - camelCase or PascalCase R identifiers
 
 The identifier check deliberately allows `SCREAMING_SNAKE` constants (`PERT_LEVELS`) and dotted S3
-methods (`print.sim_input`), both of which are correct R style. `pixi run lint` runs the same checks
-across every tracked file.
+methods (`print.sim_input`), both of which are correct R style.
+
+`pixi run lint` runs the same checks across every tracked file but is **read-only**: it reports what
+it *would* fix and exits non-zero, so it is safe in CI or against a dirty working tree. Use
+`./.githooks/pre-commit --all --fix` to actually apply the whitespace fixes repo-wide.
 
 R code is indented with **2 spaces**, following tidyverse and Google R style. YAML uses 2 as well
 (and forbids tabs outright); shell, Groovy/Nextflow, Python and JSON use 4. The hook expands tabs to

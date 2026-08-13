@@ -14,7 +14,8 @@
 #   * camelCase / PascalCase identifiers in R code
 #
 # Install:  pixi run install-hooks     (sets core.hooksPath to .githooks)
-# Lint all: pixi run lint              (same checks across the whole repo)
+# Lint all: pixi run lint              (same checks across the whole repo, read-only)
+# Fix all:  ./.githooks/pre-commit --all --fix
 
 set -uo pipefail
 
@@ -52,10 +53,18 @@ red()   { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
 warn()  { printf '\033[33m%s\033[0m\n' "$*"; }
 
+# In staged mode (the actual hook) files are rewritten and re-staged, which is the point. In --all
+# mode the default is read-only: `pixi run lint` is an audit and should be safe to run anywhere,
+# including CI and a dirty working tree. --fix opts into rewriting.
 mode="staged"
-if [ "${1:-}" = "--all" ]; then
-    mode="all"
-fi
+fix=1
+for arg in "$@"; do
+    case "$arg" in
+        --all) mode="all"; fix=0 ;;
+        --fix) fix=1 ;;
+        *) echo "Unknown argument: $arg" >&2; exit 2 ;;
+    esac
+done
 
 # A temp file rather than an array: macOS ships bash 3.2, which has no mapfile. Reading with a
 # redirection (not a pipe) keeps the loop in the current shell so the counters below survive.
@@ -100,26 +109,35 @@ while IFS= read -r file; do
 
     # --- whitespace auto-fixes ------------------------------------------------------------------
     if is_source_file "$file"; then
-        before=$(cksum < "$file")
+        # Normalise into a scratch copy first, so check-only mode can compare without writing.
+        scratch=$(mktemp)
+        cp "$file" "$scratch"
         TAB_WIDTH=$(tab_width_for "$file") perl -i -pe '
             my $w = $ENV{TAB_WIDTH};
             s/\r\n$/\n/;                      # CRLF -> LF
             s/\r/\n/g;                        # lone CR -> LF
             1 while s/\t/" " x ($w - (length($`) % $w))/e;   # tabs -> next tab stop
             s/[ \t]+$//;                      # trailing whitespace
-        ' "$file"
+        ' "$scratch"
         # Ensure the file ends with exactly one newline.
-        if [ -s "$file" ] && [ "$(tail -c 1 "$file" | wc -l | tr -d ' ')" -eq 0 ]; then
-            printf '\n' >> "$file"
+        if [ -s "$scratch" ] && [ "$(tail -c 1 "$scratch" | wc -l | tr -d ' ')" -eq 0 ]; then
+            printf '\n' >> "$scratch"
         fi
-        after=$(cksum < "$file")
-        if [ "$before" != "$after" ]; then
-            green "fixed   $file (line endings / tabs / trailing whitespace)"
-            fixed_any=1
-            if [ "$mode" = "staged" ]; then
-                git add -- "$file"
+
+        if ! cmp -s "$file" "$scratch"; then
+            if [ "$fix" -eq 1 ]; then
+                cp "$scratch" "$file"
+                green "fixed   $file (line endings / tabs / trailing whitespace)"
+                fixed_any=1
+                if [ "$mode" = "staged" ]; then
+                    git add -- "$file"
+                fi
+            else
+                warn "would fix  $file (line endings / tabs / trailing whitespace)"
+                failures=$((failures + 1))
             fi
         fi
+        rm -f "$scratch"
     fi
 
     # --- R identifier convention ---------------------------------------------------------------
@@ -148,7 +166,12 @@ if [ "$fixed_any" -eq 1 ] && [ "$mode" = "staged" ]; then
 fi
 
 if [ "$failures" -gt 0 ]; then
-    red "pre-commit: $failures problem(s) must be fixed by hand."
+    if [ "$fix" -eq 0 ]; then
+        red "lint: $failures problem(s). Re-run with --fix to apply the whitespace fixes;"
+        red "      filename and identifier problems must be fixed by hand."
+    else
+        red "pre-commit: $failures problem(s) must be fixed by hand."
+    fi
     exit 1
 fi
 
