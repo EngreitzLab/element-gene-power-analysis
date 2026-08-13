@@ -5,13 +5,20 @@ nav_order: 7
 
 # Status and handoff
 
-State of the refactor as of commit `421f406` on `main`, written so the work can be picked up on a
-SLURM cluster and the outstanding comparisons run there.
+State of the refactor, written so the work can be picked up by someone else.
 
-**Short version:** the five pipeline steps are complete, run standalone, and have been executed end
-to end on the real `sample1` dataset. What is missing is workflow orchestration (Nextflow + SLURM),
-a test suite, and one comparison that could not be done on a laptop — the draw-for-draw check of the
-new simulation against the pre-refactor code.
+**Short version:** the five pipeline steps are complete, run standalone, and have now run on
+Sherlock as well as on a laptop. `workflow/slurm_executor/` holds one plain `sbatch` script per step
+— deliberately no orchestration layer, so a failure is attributable to the step rather than the
+runner — and steps 0–3 (environment, prepare, split, smoke test) are validated there. The full
+simulation array at effect size 0.15 went out on 2026-08-13 as job `38849611`, 1,000 tasks at 100
+replicates.
+
+Still missing: Nextflow (Step 7), a test suite (Step 8), and the old-vs-new comparison, which is
+scripted in `workflow/compare_old_new.R` but cannot run until the array lands. The comparison is now
+straightforward because the reference sample `day0_grna20_no_shuffle` was produced by the old
+pipeline with the size-factor shuffle already removed, so only the RNG stream differs between the two
+implementations — see the note in `bin/lib/simulate.R`.
 
 ---
 
@@ -54,6 +61,7 @@ Shared code lives in `bin/lib/` (`cli.R`, `sim_input.R`, `pert_input.R`, `simula
 | Per-task seeding | `num_batches` silently changed results | fixed and verified invariant |
 | `effect_label` trimmed trailing zeros unconditionally | `0.2` → column `PowerAtEffectSize2` | fixed; also renamed to `power_at_effect_size_20` |
 | `sparseMatrix` local shadowing `Matrix::sparseMatrix` | fragile | gone with the old script |
+| Size factors permuted across cells before simulating | each cell's library size was paired with a different cell's perturbation status, since `effect_size[i, j]` is indexed by cell | removed; each cell keeps its own size factor. This changes the RNG stream, so a seed no longer reproduces pre-refactor output draw for draw — see [Methods]({{ site.baseurl }}{% link methods.md %}) |
 
 ### Two of my own claims that measurement overturned
 
@@ -74,23 +82,51 @@ Shared code lives in `bin/lib/` (`cli.R`, `sim_input.R`, `pert_input.R`, `simula
 
 ---
 
-## Reference numbers for `sample1`
+## Reference numbers
 
-Needed to size cluster runs. Measured, not estimated.
+Needed to size cluster runs. Measured, not estimated. The right-hand column is Sherlock, on
+`day0_grna20_no_shuffle`, and supersedes the laptop figures wherever they differ.
 
-| Quantity | Value |
-|---|---|
-| Genes × cells | 292 × 586,309 |
-| Response matrix | 1,095 MB in RAM, 55.9 % dense |
-| `cells_in_use` | 567,690 of 586,309 |
-| QC-passing pairs / targets | 32,386 / 2,798 (median 9 pairs/target, max 36) |
-| Perturbed cells per pair | median 396 (IQR 195–542, max 1,927) |
-| Discovery p-value threshold | 7.71404 × 10⁻⁴ |
-| One `run_discovery_analysis()` call | 3.4–4.8s (all controls) |
-| **Total at 100 replicates** | **~295 CPU-hours per effect size** |
-| Peak RAM, simulation task | 1.5 GB → request 4 GB |
-| Peak RAM, `prepare_sim_input.R` | 7.7 GB → request 12 GB |
-| `prepare_sim_input.R` wall time | ~25s |
+| Quantity | Laptop (`sample1`) | **Sherlock** |
+|---|---|---|
+| Genes × cells | 292 × 586,309 | same dataset shape |
+| Response matrix | 1,095 MB in RAM, 55.9 % dense | |
+| `cells_in_use` | 567,690 of 586,309 | |
+| QC-passing pairs / targets | 32,386 / 2,798 | **34,886 / 3,026** (median 9 pairs/target, max 36) |
+| Perturbed cells per pair | median 396 (IQR 195–542, max 1,927) | |
+| Discovery p-value threshold | 7.71404 × 10⁻⁴ | |
+| One `run_discovery_analysis()` call | 3.4–4.8s | **~9.7s** |
+| Cost model, per (target, replicate) | — | **4.91s + 0.459s × pairs** (R² = 0.968, 36 targets) |
+| **Total at 100 replicates** | ~295 CPU-h per effect size | **~858 CPU-h per effect size** |
+| Peak RAM, simulation task | 1.5 GB → request 4 GB | ~1.9 GB heap → 8 GB requested |
+| Peak RAM, `prepare_sim_input.R` | 7.7 GB → request 12 GB | 16 GB requested, ~70s |
+
+**The ~295 CPU-hour figure was a laptop measurement and is roughly 3× optimistic.** Sherlock's
+cores are slower per-thread than an M-series laptop, and sceptre's per-call cost is untouched by the
+refactor, so it dominates. Sized against the old pipeline's own `sacct` record for its 2026-05-14
+run, the refactor is still ahead on both axes:
+
+| | Old pipeline | Refactored |
+|---|---|---|
+| Tasks | 1,004 | 1,000 |
+| Mean per task | 78.2 min (range 0.8–134.5) | ~50 min |
+| CPU-hours per effect size | 1,308 | **~814–858** |
+| Wall clock | **14.9 h** (Snakemake, throttled) | **~50 min** (unthrottled array) |
+
+Both ran 100 replicates on the same dataset, so this is like for like. The CPU win is 1.6×; the
+wall-clock win is mostly the unthrottled array rather than the code.
+
+**48 % of the cost is the per-target term** — one `run_discovery_analysis()` call carries the full
+586,309-cell bookkeeping however few gene pairs ride along, and targets cannot be merged because
+perturbation status differs per target. Consequences worth internalising before optimising:
+
+- Halving the *pairs* saves ~26 %, not 50 %. Halving the *replicates* saves exactly 50 %.
+- Filtering pairs for a second pass is much dearer than it looks: the 4,322 pairs whose interval
+  straddles power 0.8 (12.4 % of pairs) are spread across 1,820 of 3,026 targets, so a top-up run
+  pays 60 % of the per-target overhead to redo 12 % of the pairs — 82 % of its cost is overhead.
+- Effect sizes cost the same as each other. A six-point sweep is six times the table above
+  (~5,100 CPU-h), but the 2,900-task QOS budget still allows one wave: 480 splits × 6 effect sizes
+  = 2,880 tasks, ~1h50m each, so ~2 h wall clock.
 
 ---
 
@@ -320,13 +356,68 @@ Recorded so they are not relitigated:
 | Prefer more `n_splits` over more `reps_per_chunk` | chunking replicates re-pays the per-target setup |
 | local + slurm profiles only | no cloud executor needed |
 
+## The analysis question this is all for
+
+Recorded because it determines which columns matter, and therefore how many replicates to buy.
+
+The goal is **false-negative triage**: for a pair CRISPRi did not call, is the link absent,
+or could the experiment not have seen one? Three consequences follow, and
+[Output]({{ site.baseurl }}{% link output.md %}#interpreting-negatives) explains each in full.
+
+**1. Threshold `power_ci_low`, never `power`.** "This negative is biological" asserts that power was
+*at least* 0.8. Certifying that needs 88/100 successes — or 29/30, which is why 30 replicates is
+unusable for this question regardless of what the precision tables say. At 0.15 and 100 replicates:
+37.7 % of pairs certified, 12.4 % ambiguous, 49.9 % clearly underpowered (that last half is not a
+replicate problem — it needs more perturbed cells or a larger effect).
+
+**2. Minimum detectable effect size is the deliverable, not six power columns.** `summarize_power.R`
+now emits `min_detectable_effect_size` plus a `_ci_low` / `_ci_high` bracket, where `_ci_high` is
+derived from `power_ci_low`: the interval inverts, as power rises with effect size. It turns the
+sweep into one sentence per pair: *"we would have caught a knockdown of ≥ 25 %, so the absence of a
+call rules out effects that large."* Qualifying requires clearing the threshold at that effect size
+**and every larger one tested**; taking the first effect size that clears lets noise bias
+every pair towards looking more detectable than it is.
+
+**3. Per-element power needs reframing before it can be reported.** The tempting version — "this
+element is well powered whatever gene you pair it with" — is not what the data say. At 0.15 only
+**20.9 %** of the variance in per-pair power is between elements; 79 % is gene to gene within an
+element, the mean within-element SD is **0.34**, and element mean power correlates with
+`mean_pert_cells` at only 0.38. A mean over the pairs an element happens to have tested is also
+incomparable between elements: it inherits the expression levels of whichever genes sit nearby.
+
+The defensible framing is conditional: per-pair power answers *"could we have detected this link?"*,
+per-element power answers *"how well did we perturb this element?"* — whose sufficient statistic is
+the perturbed-cell count, not anything about genes. Report it at a reference gene: "for a gene at
+median expression, element E has 0.7 power at a 15 % knockdown."
+
+**Not implemented.** The fit is cheap and needs no new simulation — `power_summary.tsv` already
+carries `mean_pert_cells` and `average_expression_all_cells` per pair, so fitting
+`power ~ f(pert_cells, expression)` and evaluating at reference expression is post-processing.
+Simulating a reference-gene panel instead would cost ~450 CPU-h, because the per-target term
+is paid whether a target carries one gene or thirty. Whoever picks this up should decide where it
+lives: a new `bin/` script, or a section of `summarize_power.R`.
+
+What *does* hold at element level is a floor: **21.9 % of elements (663/3,026) have no tested pair
+that could have reached power 0.8**, so they cannot support a "regulates nothing" claim under any
+reading, and they should be excluded from biological interpretation rather than reported as null
+results. Conversely only **5 of 3,026** elements have every tested pair certified — element-wide
+negative claims are essentially never assertable at 100 replicates and a 15 % knockdown.
+
 ## Open questions
 
-- **Two-stage replicate allocation**: worth wiring in? It gives 400-replicate precision for ~108
-  replicates of cost, but only matters if per-pair cutoff decisions are being made.
-- **`--target-overhead` in `split_pairs.R`** defaults to 0, balancing purely on pair count. The
-  fixed per-target cost of a sceptre call is real but has not been separated from the per-pair cost;
-  one clean measurement at scale would let it be set properly.
+- **Two-stage replicate allocation**: worth wiring in? Costed properly it is ~1,768 CPU-h per effect
+  size against 3,430 for a uniform 400 and 858 for a uniform 100 — a 1.9× saving over uniform 400,
+  not the 3.7× an earlier version of this document claimed. That claim came from counting replicate
+  equivalents, which ignores the per-target term; see
+  [Choosing num_replicates]({{ site.baseurl }}{% link choosing-num-replicates.md %}). It only pays
+  off if per-pair cutoff decisions are being made — which, per the section above, they are.
+- **Is the 5 % effect size worth 100 replicates?** Nearly every pair is underpowered there, so the
+  replicates buy a precise estimate of a number that is 0. Sweeping 5 % at 30 reps and spending
+  the difference on 20–25 % would carry more information. Untested.
+- **`--target-overhead` in `split_pairs.R`** defaults to 0, balancing purely on pairs. It should
+  now be set from the measured cost model: the per-target term is 4.91s against 0.459s per pair, so
+  `--target-overhead` ≈ 10.7 pair-equivalents. Splits are currently balanced on pairs alone, which
+  is why per-task times still vary with how many targets a split happens to collect.
 - **ODM / out-of-core support** is designed for but not implemented. The seam is
   `get_response_matrix()` in `bin/lib/sceptre_io.R`, which currently errors explicitly on an `odm`.
   The hard part is that poscounts size factors need a per-cell median over genes — a column-wise

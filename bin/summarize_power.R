@@ -146,14 +146,61 @@ for (i in seq_along(tables)) {
 
 ## DERIVED =========================================================================================
 
-# Smallest tested effect size reaching --power-threshold. NA means no tested effect size did, which
-# is a statement about the effect sizes you ran, not proof the pair is undetectable -- so the
-# largest effect size tested is reported alongside it for context.
-power_matrix <- as.matrix(out[, power_columns, drop = FALSE])
-out$min_detectable_effect_size <- apply(power_matrix, 1, function(row) {
-  reached <- which(!is.na(row) & row >= opts$power_threshold)
-  if (length(reached) == 0) NA_real_ else effect_sizes[min(reached)]
-})
+# Smallest tested effect size from which a pair is detectable. NA means no tested effect size
+# qualified, which is a statement about the effect sizes you ran, not proof the pair is
+# undetectable -- so the largest effect size tested is reported alongside it for context.
+#
+# TWO CHOICES ARE BAKED IN HERE AND BOTH CHANGE HOW THE COLUMN CAN BE USED.
+#
+# 1. THE SUFFIX RULE. A pair qualifies at effect size e only if it clears the threshold at e *and*
+#    at every larger effect size tested. Taking the first effect size that clears, in isolation,
+#    lets Monte-Carlo noise win: at 100 replicates a pair whose true power is 0.75 clears 0.8
+#    around a third of the time, so across six effect sizes a spurious early clear is likely, and
+#    the error is one-directional -- it always reports the pair as more detectable than it is.
+#    "Detectable from e upwards" is also the claim the column gets used to make.
+#
+#    Effect sizes a pair was not tested at are unknown, not failures, so they cannot block a
+#    suffix and are skipped.
+#
+# 2. THREE BASES, because the interval on power carries through to an interval on this. Power is
+#    monotone in effect size, so thresholding a *lower* bound on power yields a *larger* effect
+#    size -- the direction inverts:
+#
+#      min_detectable_effect_size           from `power`          point estimate
+#      min_detectable_effect_size_ci_low    from `power_ci_high`  optimistic edge
+#      min_detectable_effect_size_ci_high   from `power_ci_low`   conservative edge
+#
+#    For "this pair was powered well enough that a non-significant result means something", the
+#    conservative edge is the one to use: the smallest knockdown the data can *certify* the assay
+#    would have caught. See docs/output.md.
+min_detectable <- function(columns) {
+  values <- as.matrix(out[, columns, drop = FALSE])
+  apply(values, 1, function(row) {
+    best <- NA_real_
+    # Walk down from the largest effect size. The first known failure disqualifies everything
+    # weaker than it, so the answer is the lowest clearing effect size reached before that.
+    for (i in rev(seq_along(row))) {
+      if (is.na(row[i])) next
+      if (row[i] < opts$power_threshold) break
+      best <- effect_sizes[i]
+    }
+    best
+  })
+}
+
+out$min_detectable_effect_size <- min_detectable(power_columns)
+
+ci_low_columns <- paste0(power_columns, "_ci_low")
+ci_high_columns <- paste0(power_columns, "_ci_high")
+have_intervals <- all(c(ci_low_columns, ci_high_columns) %in% colnames(out))
+if (have_intervals) {
+  out$min_detectable_effect_size_ci_low <- min_detectable(ci_high_columns)
+  out$min_detectable_effect_size_ci_high <- min_detectable(ci_low_columns)
+} else {
+  message("  note: no power_ci_low / power_ci_high columns in the inputs; ",
+          "reporting the point estimate only. A negative result cannot be certified from it.")
+}
+
 out$max_effect_size_tested <- max(effect_sizes)
 
 out <- out[order(out$min_detectable_effect_size, na.last = TRUE,
@@ -168,6 +215,18 @@ log_step("Wrote ", nrow(out), " pairs x ", length(effect_sizes), " effect size(s
 message(sprintf("  reaching power >= %.2f at some tested effect size: %d of %d (%.0f%%)",
                 opts$power_threshold, sum(!is.na(out$min_detectable_effect_size)), nrow(out),
                 100 * mean(!is.na(out$min_detectable_effect_size))))
+if (have_intervals) {
+  # The gap between these two is the cost of insisting on a certified negative rather than a
+  # point-estimate one, and it is the number to quote when reporting how many pairs the analysis
+  # can actually say anything about.
+  certified <- sum(!is.na(out$min_detectable_effect_size_ci_high))
+  message(sprintf("  certifiable (power_ci_low >= %.2f): %d of %d pairs (%.0f%%)",
+                  opts$power_threshold, certified, nrow(out), 100 * certified / nrow(out)))
+  stricter <- sum(out$min_detectable_effect_size_ci_high > out$min_detectable_effect_size,
+                  na.rm = TRUE)
+  message(sprintf("  of those, %d land at a larger effect size than the point estimate suggests",
+                  stricter))
+}
 for (i in seq_along(effect_sizes)) {
   column <- power_columns[i]
   values <- out[[column]]

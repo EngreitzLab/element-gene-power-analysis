@@ -58,7 +58,10 @@ the true power is near 0.5 and shrinking to zero at the extremes:
 ## How many replicates do you need?
 
 There is no single right answer, because it depends on what you do with the number. Find your case
-below.
+below. If your question is the false-negative one — was a non-significant pair a real biological
+negative, or did the assay simply lack the power to see it — skip to
+[Telling a real negative from an underpowered one](#false-negatives), which is the demanding case
+and the one this pipeline was built for.
 
 ### Aggregate summaries — 100 is generous, even 20 would do
 
@@ -69,7 +72,7 @@ error averages down across pairs as `1/sqrt(num_replicates × n_pairs)`:
 |---:|---:|
 | 1 | 0.050 |
 | 100 | 0.005 |
-| 32,386 | **0.0003** |
+| 34,886 | **0.0003** |
 
 For a dataset-level number over tens of thousands of pairs, replicate count is not your limiting
 source of uncertainty — the effect-size assumption is.
@@ -80,31 +83,74 @@ At `num_replicates = 100` a per-pair estimate carries a 95 % interval of roughly
 case. That is honest and usually adequate, provided the interval is reported alongside it (it is —
 see below). At 20 replicates the interval is ±0.22, which is too coarse to publish per pair.
 
-### Per-pair decisions at a cutoff — you need ~400
+### Telling a real negative from an underpowered one — threshold the lower bound, and use ~400
+{: #false-negatives }
 
-This is the case where 100 replicates is genuinely weak. If you filter pairs on something like
-"power ≥ 0.8", the standard error at p=0.8 is 0.040, so the boundary is blurred by about ±0.08:
-pairs whose true power is 0.72 and 0.88 are routinely swapped across the cutoff. Raising to 400
-halves that to ±0.039.
+This is the primary use of the pipeline: a pair the discovery analysis did not call is either a
+biological non-effect or a measurement failure, and power is what separates them. Note what that
+claim actually requires. It is not "the point estimate is above 0.8" but "the power was *at least*
+0.8", so the column to threshold is **`power_ci_low`**, not `power`.
 
-Before reaching for 400 uniformly, read the next section — you almost certainly do not need it for
-every pair.
+That is a stricter test than it looks, and the strictness is what rules out small replicate counts:
 
-### Two-stage allocation: 400-level precision at roughly a quarter of the cost
+| `num_replicates` | successes needed for `power_ci_low` ≥ 0.8 | implied `power` |
+|---:|---:|---:|
+| 30 | 29/30 | 0.967 |
+| 100 | 88/100 | 0.880 |
+| 200 | 172/200 | 0.860 |
+| 400 | 336/400 | 0.840 |
 
-The variance `p(1-p)/n_reps` collapses at the extremes, and most pairs *are* at the extremes.
-Measured on the `sample1` dataset (33 pairs, 30 replicates, effect size 0.15):
+At 30 replicates a pair must be all but perfect before its interval clears 0.8, so the criterion is
+effectively unusable — a reason not to run 30 for this question that is separate from, and firmer
+than, the precision argument. At 100 the criterion silently discards the 0.80–0.88 band; at 400 only
+0.80–0.84.
 
-- **55 %** of pairs came out at exactly 0 or 1
-- only **21 %** fell in the uncertain band (0.1, 0.9)
+Measured on all 34,886 pairs at effect size 0.15 and 100 replicates, the three outcomes are:
 
-Extra replicates spent on a pair that is 0/30 or 30/30 buy almost nothing. So:
+| | pairs | |
+|---|---:|---:|
+| certified well powered, `power_ci_low` ≥ 0.8 — a negative here is biological | 13,154 | 37.7 % |
+| ambiguous, the interval contains 0.8 | 4,322 | 12.4 % |
+| clearly underpowered, `power_ci_high` < 0.8 — a negative here says nothing | 17,410 | 49.9 % |
 
-1. **Stage 1** — run `num_replicates = 30` for every pair.
-2. **Stage 2** — top up to 400 only for pairs whose stage-1 estimate lies in (0.1, 0.9).
+Only the middle row can be moved by more replicates, which is what the next section exploits. The
+bottom row is not a precision problem: those pairs need more perturbed cells or a bigger effect
+size, and no number of replicates will rescue them.
 
-Average cost is about `30 + 0.21 × 370 ≈ 108` replicate-equivalents per pair, versus 400 for the
-uniform design: **~3.7× cheaper for the same precision where precision matters.**
+### Two-stage allocation: 400-level precision at roughly half the cost
+
+The variance `p(1-p)/n_reps` collapses at the extremes, and many pairs *are* at the extremes, so
+replicates spent on a pair that came out 0/100 or 100/100 buy almost nothing. Target the second
+stage at the pairs whose interval straddles the cutoff you care about:
+
+1. **Stage 1** — `num_replicates = 100` for every pair.
+2. **Stage 2** — 300 more replicates only for the 12.4 % of pairs whose stage-1 interval contains
+   0.8, invoked with `--rep-offset 100` so the `rep` column stays unique and the two sets of
+   results can simply be concatenated.
+
+Measured cost on this dataset, per effect size:
+
+| design | CPU-hours | precision at the cutoff |
+|---|---:|---|
+| uniform 100 | 858 | ±0.08 |
+| **two-stage 100 → 400** | **1,768** | ±0.04 where it matters |
+| uniform 400 | 3,430 | ±0.04 everywhere |
+
+**Do not size stage 2 by counting replicates.** The 4,322 ambiguous pairs are only 12.4 % of the
+pairs, but they are spread across 1,820 of the 3,026 targets, and cost is `4.91 s + 0.459 s × pairs`
+per (target, replicate) — see [Cost](#cost). Stage 2 therefore pays 60 % of the per-target overhead
+to re-simulate 12 % of the pairs, and **82 % of its 910 CPU-hours is that overhead**. The naive
+"`100 + 0.124 × 300 ≈ 137` replicate-equivalents per pair" arithmetic predicts 1,175 CPU-hours and
+understates the real figure by a third. Any scheme that filters pairs rather than whole targets has
+this property.
+
+An earlier version of this page put the uncertain band at 21 % of pairs and two-stage at 108
+replicate-equivalents, measured on 33 pairs at 30 replicates. On the full 34,886 pairs at 100
+replicates the band (0.1, 0.9) holds **44.1 %** of pairs, not 21 %, and 17.1 % land at exactly 0 or
+1 rather than 55 %. Thirty replicates overstates how many pairs are truly at the extremes, because
+at 30 draws a pair with true power 0.9 hits 30/30 about 4 % of the time. Band-based targeting on the
+real numbers costs `30 + 0.441 × 370 ≈ 193` replicate-equivalents — which is why the design above
+targets the cutoff instead of the band.
 
 Pooling the two stages is unbiased — replicates are exchangeable draws, so combining them is fine
 as long as `n_reps` is reported per pair, which the output does. The one thing to avoid is
@@ -153,18 +199,30 @@ cutoff-blurring described above, made explicit.
 
 ## Cost
 
-Replicate count is the parameter you pay for linearly. Measured on `sample1` (2,798 targets,
-32,386 pairs, all control cells, one `run_discovery_analysis()` call ≈ 3.4–4.8s):
+Replicate count is the parameter you pay for linearly. Measured on Sherlock over 36 targets
+(3,026 targets and 34,886 pairs in the full run), cost fits
+
+```
+seconds per (target, replicate) = 4.91 + 0.459 × (pairs in that target)      R² = 0.968
+```
+
+which puts **48 % of the bill in a per-target term that pair counts do not touch**: one
+`run_discovery_analysis()` call carries the full 586,309-cell bookkeeping however few gene pairs
+ride along, and targets cannot be merged into one call: perturbation status differs per target.
 
 | `num_replicates` | CPU-hours per effect size |
 |---:|---:|
-| 30 | ~89 |
-| 100 | ~295 |
-| 400 | ~1,180 |
-| two-stage to 400 | ~320 |
+| 30 | ~257 |
+| 100 | ~858 |
+| 400 | ~3,430 |
+| two-stage 100 → 400 | ~1,768 |
 
-Doubling replicates doubles cost and only improves precision by `sqrt(2)` — which is the whole
-argument for spending them where the variance is, rather than uniformly.
+Replicates are the one lever that scales *both* terms, which is why halving them halves the bill
+exactly, while dropping half the pairs saves only ~26 %. Against that, doubling replicates only
+improves precision by `sqrt(2)` — hence spending them where the variance is rather than uniformly.
+
+Effect sizes cost the same as each other: the effect size changes the numbers drawn, not the work
+done. A six-point sweep is six times the figures above.
 
 ---
 
