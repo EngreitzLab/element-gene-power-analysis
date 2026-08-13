@@ -45,9 +45,14 @@ echo
 
 mkdir -p "${LOG_DIR}"
 
-fit_cmd=(sbatch --array="1-${n_tasks}" "${PASSTHROUGH[@]}"
+# ${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}, not "${PASSTHROUGH[@]}": config.sh sets `set -u`, and bash
+# 4.2 (what CentOS 7 ships) treats an empty array as unset, so the plain form fails outright with
+# "PASSTHROUGH[@]: unbound variable" whenever this script is invoked with no extra arguments -- which
+# is the normal case. Same reasoning as 04_submit.sh, where this was already fixed; see the longer
+# note there on why the `+` form rather than `-`.
+fit_cmd=(sbatch --array="1-${n_tasks}" ${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}
          "${CONFIG_DIR}/02b_fit_null_models.sbatch")
-merge_cmd_base=(sbatch "${PASSTHROUGH[@]}" "${CONFIG_DIR}/02c_merge_null_models.sbatch")
+merge_cmd_base=(sbatch ${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"} "${CONFIG_DIR}/02c_merge_null_models.sbatch")
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then
   echo "would run: ${fit_cmd[*]}"
@@ -62,6 +67,6 @@ array_id="$(echo "${out}" | awk '{print $NF}')"
 if [[ "${MERGE}" -eq 1 ]]; then
   # afterok on the whole array: the merge refuses an incomplete set anyway, but not launching it at
   # all gives a clearer failure than a merge that errors on a gap.
-  sbatch --dependency="afterok:${array_id}" "${PASSTHROUGH[@]}" \
+  sbatch --dependency="afterok:${array_id}" ${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"} \
     "${CONFIG_DIR}/02c_merge_null_models.sbatch"
 fi
