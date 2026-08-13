@@ -132,10 +132,11 @@ gene sets are disjoint, which is Step 9 below. Consequences worth internalising 
 
 ---
 
-## Unresolved — which per-gene null model does the simulation test against?
+## Settled — which per-gene null model does the simulation test against?
 
-Found while profiling, not yet settled, and it bears on every power number rather than on
-performance. **Read this before trusting a power estimate to two decimal places.**
+**Verdict: fit the null model on a null simulation of each replicate and reuse it (`null_fit`).**
+Today's inherited-cache behaviour understates power, and the fix costs 1.7 %. Measured by job
+`38854980` and the threshold check `38861277`; the numbers are below.
 
 Before testing any pair, sceptre fits a Poisson GLM of the gene's counts on the cell covariates
 (`perform_response_precomputation`, `precomputation_functions.R:13`) — the null model the perturbed
@@ -149,9 +150,10 @@ Two measured facts follow:
 - `glm.fit` is **27 % self / 59 % total** under `Rprof`, against 7 % for our own `rnbinom` draws, so
   GLM fitting is the single largest cost in a call. **That 59 % is not this precomputation.** The
   profile was taken over the current path, with the inherited cache populated and the precomputation
-  therefore skipped — so the 59 % is GLM work sceptre does anyway, and clearing the cache would add
-  the precomputation cost *on top* of it. How much it adds is unmeasured; job `38854980` is the first
-  run that clears the slot explicitly.
+  therefore skipped — so the 59 % is GLM work sceptre does anyway. Clearing the cache adds the
+  precomputation *on top* of it, and the table below measures that: 4.3×, all of it in the per-pair
+  term. What the resident 59 % actually is remains unidentified, and it bounds what any pooling
+  optimisation such as Step 9 can recover.
 - `sceptre_template.rds` **inherits 272 precomputations from the real discovery analysis, and they
   cover all 237 genes that have QC-passing pairs — none are refitted.** So every simulated count is
   tested against coefficients fitted to *real* counts. Measured directly by job `38854980`: 237 of
@@ -159,31 +161,123 @@ Two measured facts follow:
   easier to reason about but no more correct — a faithful emulation fits its null model on the data
   it is given, and the real analysis did exactly that.
 
-It is not a rounding-level choice. Replacing the inherited coefficients with ones fitted on a null
-simulation — `as_is` against `null_fit`, on 25 p-values from one target — moved p-values by up to
-0.942 with a Spearman correlation of 0.224. Whichever of the two is right, the other gives materially
-different power numbers. Note this pair does *not* include `cleared`, so it does not yet say which is
-closer to what sceptre would have done on the simulated counts alone.
+### The three configurations, measured
 
-Job `38854980` measures three explicit configurations to settle it: `as_is` (the inherited real-data
-cache, today's behaviour), `cleared` (refit on the simulated counts — the faithful reference), and
-`null_fit` (fitted once on a null simulation of the same replicate, then reused). It reports how many
-of the 237 tested genes the inherited cache even covers, how far the inherited coefficients sit from a
-fresh fit, and the p-value agreement between the three. **Verdict pending.**
+Job `38854980` ran all three on 3 targets × 5 replicates, rotating the order within each replicate so
+no configuration is always first:
 
-Note the pre-refactor pipeline inherited the same cache, so the old-vs-new comparison is unaffected —
-the question is whether *both* are right. If `cleared` is the correct reference, the code fix is one
-line (clear the slot in `prepare_sim_input.R`); the cost of that fix is **not yet known** and is what
-job `38854980` measures. `null_fit` is then the way to buy the cost back: fit once per
-(gene, replicate) on a null simulation and reuse across the ~147 targets a gene pairs with.
+| | What it does | Cost model | CPU-h per effect size |
+|---|---|---|---:|
+| `as_is` | inherited real-data cache — today's behaviour | 5.85s + 0.839s × pairs | 1,305 |
+| `cleared` | refits inside every call, on that call's simulated counts — **the faithful reference** | 8.18s + 5.127s × pairs | 5,656 |
+| `null_fit` | fitted once per (gene, replicate) on a null simulation, then reused | 5.51s + 0.891s × pairs | **1,327** |
 
-An earlier version of this section put the cost of `cleared` at ~2.4× per call. That number was
-`1 / (1 - 0.59)` applied to the `glm.fit` share above, and since that share is not the
-precomputation, it had no basis. Do not quote it.
+`cleared` is **4.3×**, and the extra cost sits in the *per-pair* slope, not the intercept — each pair
+in a call is a distinct gene, so refitting scales with the genes tested. It is a reference, never a
+production candidate. `null_fit` buys its fidelity for **+1.7 % over `as_is`**.
+
+Treat the *ratios* as sound and the absolute CPU-hours as indicative only: this job timed `as_is` at
+11.5s on the 5-pair target where the profiling run measured 6.15s, so its clock runs ~1.9× slow —
+probably because it holds three caches and a null simulation in memory at once. That is also why the
+1,305 CPU-h here disagrees with the ~858 in the table above. The 100-replicate array's own `sacct`
+record supersedes both.
+
+### Why `as_is` is not good enough
+
+Aggregate p-value agreement looks reassuring and is misleading:
+
+```
+cleared vs null_fit   n=265  max|diff|=0.012  median=1.2e-10  spearman=1.0000
+cleared vs as_is      n=265  max|diff|=0.08   median=4.6e-05  spearman=0.9990
+```
+
+Power is not aggregate. It is the fraction of replicates with `p < 7.2629e-4`, so only crossings of
+that threshold matter, and a median difference of 4.6e-05 is ~6 % of the threshold itself. Counting
+the calls instead of correlating the p-values (job `38861277`, `threshold_check.R`):
+
+```
+cleared vs null_fit   flips=0 / 265 (0.00 %)   per-pair power identical
+cleared vs as_is      flips=7 / 265 (2.64 %)   [cleared-only=7, as_is-only=0]
+```
+
+- **`null_fit` is exactly equivalent to the faithful reference** — zero disagreements in 265 calls,
+  and per-pair power identical to three decimal places.
+- **`as_is` is biased, one-directionally.** All 7 flips go the same way: `cleared` calls the pair
+  significant and `as_is` does not, never the reverse (137 of 265 significant against 144). Random
+  noise would split both ways — P ≈ 0.016 for 7–0 — so `as_is` **understates power**, by a mean
+  |Δpower| of 0.026 on this sample.
+- It concentrates where it matters. Only ~37 of 265 p-values sit within a factor of 10 of the
+  threshold, so roughly **19 % of near-threshold calls flip**.
+
+Caveat on the magnitude: 3 targets, 53 pairs, 5 replicates. The *direction* is solid and the
+equivalence of `null_fit` is unambiguous; the 2.64 % figure is thin and should not be quoted as
+precise.
+
+Note the coefficients themselves differ substantially — inherited theta median 20.0 against 18.8 from
+the null fit, median worst-coefficient difference 7.77 — while the p-values barely move. sceptre's
+conditional-resampling test is far more robust to the null model than the null model is stable.
+
+### Consequences
+
+- **The effect size 0.15 array (`38849611`) ran `as_is`**, so its power values are biased low by
+  roughly 0.03. That is *conservative* for the false-negative triage question — it under-certifies
+  negatives rather than over-certifying them — so nothing built on it is unsafe, only pessimistic.
+  It should still be rerun under `null_fit` before publication.
+- The pre-refactor pipeline inherited the same cache, so the **old-vs-new comparison is unaffected**:
+  both sides share the bias. Compare them `as_is` against `as_is`.
+- Clearing the slot without supplying null fits gives `cleared`, at 4.3×. The two changes must land
+  together.
+
+An earlier version of this section put the cost of `cleared` at ~2.4× per call and cited a p-value
+divergence of 0.942 with Spearman 0.224 between `as_is` and `null_fit`. Both came from
+`profile_call.R`, whose first configuration was labelled "refit, as the pipeline runs today" but
+inherited the template's cache and refitted nothing (`line 100` only overwrites the slot when
+`precomp` is non-NULL). The 2.4× was `1 / (1 - 0.59)` applied to a `glm.fit` share that is not the
+precomputation. The proper experiment gives `as_is` vs `null_fit` max 0.088 and Spearman 0.9989, so
+**both numbers are retracted**. Why that script reported 0.942 at all is unexplained; it is
+superseded by `cache_experiment.R` and should not be used.
 
 ---
 
 ## Left to do
+
+### Step 6a — adopt `null_fit` (do this before spending on another effect size)
+
+Settled by the section above and cheap, but it is not the one-line change the earlier draft claimed,
+because the null fit has to be **shared across array tasks**. A gene's null model is
+target-independent, so one fit per (gene, replicate) serves every target — but targets are spread over
+1,000 splits, so fitting inside each task would pay for it 1,000 times instead of once.
+
+It is also **effect-size independent**: a null simulation has no knockdown, so one set of fits serves
+the whole sweep. 100 replicates, not 100 × 6.
+
+Shape of the change:
+
+1. **New `bin/fit_null_models.R`** — for each replicate, simulate a null matrix (no knockdown) and run
+   one `run_discovery_analysis()` with `@response_precomputations` empty, keeping only the resulting
+   slot. An entry is 11 named coefficients plus a `theta` scalar, so 100 replicates × 272 genes is a
+   few hundred KB, not a memory problem. Seed from `(seed, rep)` only — deliberately *not*
+   `(seed, target, rep, effect_size)`, since the point is that it does not depend on target or effect
+   size. Cost is ~25 CPU-h for 100 replicates, consistent with the +22 CPU-h the `null_fit_amortized`
+   model implies.
+2. **`run_power_simulation.R` gains `--null-precomputations`** and, inside the replicate loop, assigns
+   that replicate's entry to `obj@response_precomputations` before the call — the same one-line
+   injection `cache_experiment.R:106` does.
+3. **`prepare_sim_input.R` clears the inherited slot** on the template, *after*
+   `build_dispersion_vector` has read it (`line 259`) — dispersions must keep coming from the real
+   data, since they set the noise the simulation is meant to reproduce. Only the null model moves.
+   Clearing is what makes an accidental `as_is` impossible to reintroduce.
+4. **New `workflow/slurm_executor/` step** between 02 and 04, and a `--null-precomputations` argument
+   threaded through `04_run_power_simulation.sbatch`.
+
+Guard against the failure mode this whole investigation was about: `run_power_simulation.R` should
+**error if the template arrives with a non-empty `@response_precomputations` and no
+`--null-precomputations` is given**, rather than silently running `as_is`. That is the bug that went
+unnoticed for the entire refactor.
+
+Then rerun effect size 0.15. Keep the `as_is` output rather than deleting it — it is the only direct
+measurement of how much the bias moved real numbers at 100 replicates, and the threshold check that
+found the bias used 5.
 
 ### Step 7 — Nextflow + SLURM profile
 
@@ -381,8 +475,27 @@ dataset's.
 
 **Open points before adopting it.**
 
-- **Validated on one dataset.** Repeat the held-out test on `day0` once its sweep exists; the two
-  datasets differ enough in power that the fit quality should not be assumed to transfer.
+- **Validated on one dataset, and this is now the critical gap.** `dc_tap_paper_wtc11_no_shuf` is the
+  *only* dataset with a full six-point sweep. Inventory of what exists today:
+
+  | Dataset | Effect sizes with power output |
+  |---|---|
+  | `dc_tap_paper_wtc11_no_shuf` | **0.05 / 0.1 / 0.15 / 0.2 / 0.25 / 0.5** |
+  | `day0_grna20` | 0.1 / 0.15 / 0.2 |
+  | `dc_tap_paper_k562` / `dc_tap_paper_wtc11` | 0.05 / 0.1 (and both carry the size-factor shuffle) |
+  | `day0_grna20_no_shuffle`, `dc_tap_paper_k562_no_shuf`, `day2`, `day4` | 0.15 only |
+
+  So the held-out test cannot be repeated on a second dataset without new compute. **Sweeps are needed
+  on at least two more datasets**, and the two worth doing are `dc_tap_paper_k562_no_shuf` — same
+  protocol as `wtc11`, different cell type, so it isolates cell type from method — and **Gasperini et
+  al.**, which is a different lab, protocol and scale entirely and is therefore the real test of
+  generalization. The DC-TAP data is Ray et al.; `wtc11` and `k562` are two of its cell types, so
+  validating only within it is close to validating within one experiment.
+
+  Note the shuffled variants are not usable as references for absolute power, since the size-factor
+  permutation paired each cell's library size with another cell's perturbation status. They may still
+  be usable for checking the *functional form* of the curve, which is a claim about shape rather than
+  level — worth deciding deliberately rather than by accident.
 - **`z` should come from the threshold, but did not match.** Fitting `z` per pair on `wtc11` gives a
   median of 2.045, and the script's `--threshold-file` route would use `qnorm(1 - threshold)`. Where
   those disagree, `--fit-z` profiles a single shared `z` by total deviance. Worth understanding why
@@ -444,6 +557,44 @@ empirically near-constant.
 The defensible per-pair version, if wanted, is to calibrate the residual quantiles on a measured
 subset and widen each pair's effect-size interval by them. That gives honest intervals, merely wider
 than measured ones — and quantifies what a measured sweep is buying.
+
+#### What this needs before it can carry a paper
+
+This subsection was written as a caveat on a side result. It is no longer a side result: predicting
+power for pairs that were never simulated is the intended headline, because it is the only route to
+power for the `trans` pairs a bootstrap cannot reach (an element against genes on another chromosome —
+sceptre supports the test, but simulating it pair by pair is infeasible). The claim therefore rests on
+the least-validated result in this document, and these are the gaps, recorded so they are not
+discovered late:
+
+- **Fitted on one dataset.** Cross-dataset transfer *is* the claim, and it is untested. Needs
+  `dc_tap_paper_k562_no_shuf` (same protocol, different cell type) and **Gasperini et al.** (different
+  lab, protocol and scale) — the same two sweeps the power-curve section above needs, so one round of
+  compute serves both. Refit `log(k) ~ log(pert_cells) + log(expression)` per dataset and ask whether
+  the *coefficients* transfer, not just whether each dataset fits well on its own. A model that has to
+  be refitted per dataset is still useful but is a different, weaker claim.
+- **A ×1.28 error in `k` is ≈ ±0.20 in power mid-transition**, and it is model error, not sampling
+  noise, so it does not shrink with more replicates. It is also unlikely to be spread evenly across
+  genes. For training labels in scE2G / ENCODE-rE2G, that means mislabelled negatives concentrated in
+  a non-random subset of pairs — which is worse for a classifier than uniform noise. Quantify *which*
+  pairs the residuals concentrate in (expression decile? dispersion? cell count?) rather than
+  reporting the residual sd alone.
+- **The covariate model is close to a one-covariate model on this data.** Expression alone explains
+  83.7 % of the variance in `k`, perturbed cells alone 2.3 %. The `sqrt(n)` exponent is confirmed at
+  0.502 against a theoretical 0.500, so cell count is causally right and empirically near-constant
+  *here* — but a reviewer will ask, and a dataset with real variation in perturbed-cell count is what
+  answers it. Gasperini et al. differs enough in scale to provide that.
+- **The `trans` case needs a demonstration, not an argument.** Simulate a tractable subset of `trans`
+  pairs directly, then compare against what the covariate model predicts for them. Without that, the
+  headline is an extrapolation from `cis` pairs to a regime where nothing has been measured — and
+  `trans` pairs may differ systematically, since the gene sets are not matched to the element's
+  neighbourhood.
+- **Calibrated intervals should be a contribution, not a footnote.** Prediction plus honest
+  residual-calibrated intervals is a defensible per-pair claim; a point prediction with ±0.20 is not.
+
+Prior art to check before writing any of this up: **scPower** (Schmid et al.) is the work reviewers
+will name, and the claim that no satisfying method exists needs an actual literature search rather
+than an assumption.
 
 ---
 

@@ -182,6 +182,22 @@ slim_sceptre_object <- function(so) {
   if (length(so@grna_matrix) >= 1 && !methods::is(so@grna_matrix[[1]], "odm")) {
     so@grna_matrix <- list(empty_like(so@grna_matrix[[1]]))
   }
+
+  # Drop the per-gene null models fitted during the *real* discovery analysis.
+  #
+  # sceptre skips fitting a gene's null model whenever @response_precomputations already holds an
+  # entry for it -- exact memoization in a real analysis, where the gene's counts are identical in
+  # every one of the ~147 pairs it appears in. In a simulation the counts are redrawn every replicate,
+  # so carrying these entries over means testing simulated counts against coefficients fitted to real
+  # counts. Measured, that understates power: 7 of 265 discovery calls flipped against a faithful
+  # refit, all 7 in the same direction (docs/status.md).
+  #
+  # Cleared here rather than in prepare_sim_input.R because it must happen *after*
+  # build_dispersion_vector() has read the slot -- the dispersions must keep coming from the real
+  # data, since they set the noise the simulation exists to reproduce. Only the null model moves.
+  # fit_null_models.R supplies the replacement, per replicate.
+  so@response_precomputations <- list()
+
   so
 }
 

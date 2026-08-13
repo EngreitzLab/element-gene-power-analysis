@@ -31,6 +31,13 @@ SIM_DIR="${OUTDIR}/sim"
 POWER_DIR="${OUTDIR}/power"
 COMPARISON_DIR="${OUTDIR}/comparison"
 
+# Per-replicate null models (step 02b), and the null_fit validation subset (steps 08-09). The
+# subset writes to its own tree so it can never be mistaken for, or concatenated with, the
+# as_is output in SIM_DIR.
+NULL_MODELS_DIR="${OUTDIR}/null_models"
+NULL_MODELS="${PREPARED_DIR}/null_precomputations.rds"
+NULL_FIT_SIM_DIR="${OUTDIR}/sim_null_fit"
+
 LOG_DIR="${REPO_ROOT}/logs/refactor"
 
 ## PIPELINE PARAMETERS ============================================================================
@@ -50,6 +57,26 @@ EFFECT_SIZES=(0.15)
 NUM_REPLICATES=100     # Monte-Carlo replicates per pair
 SEED=20250812          # base RNG seed
 GUIDE_SD=0.13          # spread of per-gRNA effect sizes around the target effect size
+
+## NULL MODELS (step 02b) =========================================================================
+#
+# Replicates per array task when fitting null models. One fit covers every gene (~237) on one
+# replicate and takes ~20 minutes, so 1 per task keeps wall clock at ~20 minutes for the whole set
+# instead of ~33 hours serial. Raise it only if the array-task budget is tight.
+REPS_PER_NULL_CHUNK=1
+
+## NULL_FIT VALIDATION SUBSET (steps 08-09) =======================================================
+#
+# How many splits to re-run under null_fit to measure what the inherited cache cost us, without
+# paying for a full second sweep.
+#
+# The comparison is exactly paired: seeds derive from (seed, target, rep, effect_size), which does
+# not involve the null model, so the simulated count matrices are bit-identical between the as_is
+# run and this one. Both configurations skip the GLM fit -- one from the inherited cache, one from
+# the bundle -- so RNG consumption matches too. Every difference in power is therefore attributable
+# to the null model, with zero Monte-Carlo noise between the two runs. That is why 20 splits are
+# decisive where 53 pairs at 5 replicates were only suggestive.
+NULL_FIT_SUBSET_SPLITS=20
 
 # Parallel tasks per effect size. Does not affect results -- seeds derive from
 # (seed, target, rep, effect_size), so the pipeline is invariant to the split layout. It decides

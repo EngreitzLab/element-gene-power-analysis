@@ -44,6 +44,12 @@ option_list <- list(
               help = "One split from split_pairs.R (columns grna_target, response_id)."),
   make_option("--grna-targets", type = "character", default = NULL, dest = "grna_targets",
               help = "grna_targets.tsv from prepare_sim_input.R."),
+  make_option("--null-precomputations", type = "character", default = NULL,
+              dest = "null_precomputations",
+              help = paste("null_precomputations.rds from fit_null_models.R: the per-gene null",
+                           "model fitted on a null simulation of each replicate. Without it,",
+                           "sceptre refits the null model inside every call, which is faithful but",
+                           "costs 4.3x. See docs/status.md.")),
   make_option("--effect-size", type = "double", default = NULL, dest = "effect_size",
               help = paste("Effect size as a *fractional decrease* in expression, e.g. 0.15 for",
                            "a 15%% knockdown. Converted internally to a relative expression",
@@ -113,6 +119,51 @@ log_resources("load inputs", started)
 
 split_pairs <- read_tsv_file(opts$pairs, required_columns = c("grna_target", "response_id"))
 grna_map <- read_tsv_file(opts$grna_targets, required_columns = c("grna_id", "grna_target"))
+
+# --- the per-gene null model ------------------------------------------------------------------
+# sceptre skips fitting a gene's null model whenever @response_precomputations already holds an entry
+# for it. Three states are possible and only two are wanted, so they are resolved here rather than
+# left to whatever the template happens to carry:
+#
+#   --null-precomputations given   fits from fit_null_models.R, one set per replicate. Correct and
+#                                  cheap; this is the intended path.
+#   no flag, empty template slot   sceptre refits inside every call. Faithful, 4.3x dearer.
+#   no flag, populated slot        the bug this guard exists for. The template used to inherit 272
+#                                  fits from the *real* discovery analysis, so simulated counts were
+#                                  tested against real-data coefficients -- which measurably
+#                                  understates power. It is silent, so it is refused.
+null_precomp <- NULL
+if (!is.null(opts$null_precomputations)) {
+  null_bundle <- readRDS(opts$null_precomputations)
+  if (!is.list(null_bundle) || is.null(null_bundle$precomputations)) {
+    stop("--null-precomputations ", opts$null_precomputations, " is not a bundle from ",
+         "fit_null_models.R.", call. = FALSE)
+  }
+  if (!identical(as.integer(null_bundle$seed), as.integer(opts$seed))) {
+    stop("--null-precomputations was fitted with --seed ", null_bundle$seed, " but this run uses ",
+         opts$seed, ". The null models would not correspond to these replicates.", call. = FALSE)
+  }
+  wanted <- as.character(opts$rep_offset + seq_len(opts$reps))
+  absent <- setdiff(wanted, names(null_bundle$precomputations))
+  if (length(absent) > 0) {
+    stop("--null-precomputations covers replicates ",
+         paste(range(null_bundle$reps), collapse = "-"), " but this chunk needs ",
+         paste(range(as.integer(wanted)), collapse = "-"), "; missing ", length(absent), ".",
+         call. = FALSE)
+  }
+  null_precomp <- null_bundle$precomputations
+  log_step("Null models: ", length(null_precomp), " replicates from ",
+           opts$null_precomputations)
+  template@response_precomputations <- list()
+} else if (length(template@response_precomputations) > 0) {
+  stop("The sceptre template carries ", length(template@response_precomputations),
+       " inherited @response_precomputations from the real discovery analysis. Testing simulated ",
+       "counts against real-data coefficients understates power (see docs/status.md). Either pass ",
+       "--null-precomputations from fit_null_models.R, or re-run prepare_sim_input.R, which now ",
+       "clears the slot.", call. = FALSE)
+} else {
+  log_step("Null models: refitted inside every call (no --null-precomputations; ~4.3x cost)")
+}
 
 # The split file says *which* targets and genes this task owns; the sceptre-format pair rows
 # (with n_nonzero_trt / n_nonzero_cntrl / pass_qc, which sceptre needs) come from the object
@@ -225,6 +276,14 @@ for (target in targets) {
 
     sceptre_use <- target_template
     sceptre_use@response_matrix <- list(as_sceptre_response_matrix(counts, report_density = FALSE))
+
+    # This replicate's null models, fitted on a null simulation of the same replicate. Passing the
+    # full set rather than this target's genes is deliberate: sceptre looks entries up by
+    # response_id, so the extra ones are inert, and subsetting would cost a match() per rep for no
+    # benefit. Left empty, sceptre refits each gene here instead.
+    if (!is.null(null_precomp)) {
+      sceptre_use@response_precomputations <- null_precomp[[as.character(rep_id)]]
+    }
 
     # run_discovery_analysis() cat()s a "consider parallel = TRUE" note on every call. Left
     # unchecked that is one line per (target, rep) -- 279,800 lines per effect size on sample1.

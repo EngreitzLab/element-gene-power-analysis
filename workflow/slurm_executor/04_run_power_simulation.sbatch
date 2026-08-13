@@ -74,6 +74,12 @@ require_file "${PREPARED_DIR}/sceptre_template.rds" "sceptre_template.rds from s
 require_file "${PREPARED_DIR}/grna_targets.tsv"     "grna_targets.tsv from step 01"
 require_dir_nonempty "${SPLITS_DIR}"                "splits directory from step 02"
 
+# The per-replicate null models. Without these, sceptre either refits inside every call (4.3x) or --
+# if the template still carries the inherited real-data cache -- silently tests simulated counts
+# against real-data coefficients, which understates power. run_power_simulation.R refuses the latter.
+NULL_MODELS="${PREPARED_DIR}/null_precomputations.rds"
+require_file "${NULL_MODELS}" "null_precomputations.rds from step 02b"
+
 n_available=$(find "${SPLITS_DIR}" -name 'split_*.tsv' | wc -l)
 if [[ "${n_available}" -ne "${N_SPLITS}" ]]; then
   echo "ERROR: ${n_available} split files present but N_SPLITS=${N_SPLITS} in config.sh." >&2
@@ -122,6 +128,7 @@ pixi_run Rscript bin/run_power_simulation.R \
   --sceptre-template "${PREPARED_DIR}/sceptre_template.rds" \
   --pairs "${SPLIT}" \
   --grna-targets "${PREPARED_DIR}/grna_targets.tsv" \
+  --null-precomputations "${NULL_MODELS}" \
   --effect-size "${ES}" \
   --reps "${NUM_REPLICATES}" \
   --rep-offset 0 \

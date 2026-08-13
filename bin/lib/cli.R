@@ -120,6 +120,14 @@ derive_seed <- function(base_seed, target, rep, effect_size) {
   stable_hash(paste(base_seed, target, rep, effect_size, sep = "|"))
 }
 
+#' Stands in for `target` when seeding work that belongs to a replicate rather than to a target.
+#'
+#' The null-model fits in fit_null_models.R are the case: a null simulation applies no knockdown, so
+#' its counts depend on neither the target nor the effect size, and seeding it from a real target's
+#' key would both misrepresent that and collide with that target's own stream. A gRNA target can
+#' never be named this, since targets are genomic coordinates or control labels.
+NULL_FIT_TARGET_KEY <- "__null_fit__"
+
 #' Timestamped progress message on stderr.
 log_step <- function(...) {
   message("[", format(Sys.time(), "%H:%M:%S"), "] ", ...)
