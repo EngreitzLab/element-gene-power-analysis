@@ -37,6 +37,16 @@ require_dir_nonempty "${SPLITS_DIR}"                "splits directory from step 
 
 mkdir -p "${SMOKE_DIR}"
 
+# Collect the outputs this run writes, and check only those. Globbing ${SMOKE_DIR} instead would pick
+# up leftovers from an earlier run, and because split_pairs.R pads the split index to the width of
+# --n-splits, a previous run at a different N_SPLITS leaves *differently named* files that a glob
+# cannot tell apart: 280 splits give smoke_split_001_*.tsv, 1000 give smoke_split_0001_*.tsv. That is
+# not hypothetical -- it made the replicate-count check below fail against 250-row files from a
+# 280-split run while every file this run wrote was correct. Step 02 avoids the same trap by
+# `rm -rf`-ing its output directory; this keeps prior smoke output instead, since it is cheap to keep
+# and occasionally useful to compare against.
+smoke_outputs=()
+
 for i in $(seq 1 "${SMOKE_SPLITS}"); do
   # Selected by position rather than by formatting the index: split_pairs.R pads the filename to
   # the width of --n-splits, so 280 splits give split_001.tsv but 1000 would give split_0001.tsv.
@@ -56,18 +66,19 @@ for i in $(seq 1 "${SMOKE_SPLITS}"); do
     --guide-sd "${GUIDE_SD}" \
     --seed "${SEED}" \
     --out "${out}"
+  smoke_outputs+=("${out}")
 done
 
 ## CHECKS =========================================================================================
 
 echo
 echo ">>> smoke outputs"
-for f in "${SMOKE_DIR}"/smoke_*_es${EFFECT_SIZE}.tsv; do
+for f in "${smoke_outputs[@]}"; do
   require_file "${f}" "smoke output"
   printf '  %-44s %6d rows\n' "$(basename "${f}")" "$(($(wc -l < "${f}") - 1))"
 done
 
-first=$(ls "${SMOKE_DIR}"/smoke_*_es${EFFECT_SIZE}.tsv | head -1)
+first="${smoke_outputs[0]}"
 
 echo
 echo ">>> columns"
@@ -104,9 +115,14 @@ awk -F'\t' '
     if (bad > 0)          { print  "    ERROR: replicate count per pair is wrong"; exit 1 }
     if (na_p >= n)        { print  "    ERROR: every p_value is NA"; exit 1 }
   }
-' REPS="${SMOKE_REPS}" "${SMOKE_DIR}"/smoke_*_es${EFFECT_SIZE}.tsv
+' REPS="${SMOKE_REPS}" "${smoke_outputs[@]}"
 
 echo
-echo "Smoke test passed. Size step 4's --time from the per-target timings logged above."
+echo "Smoke test passed."
+echo
+echo "Sizing step 4 from the per-target timings above is only valid if step 4 runs the same null-model"
+echo "configuration as this run did. With --null-precomputations (null_fit) a call is far cheaper than"
+echo "without it (the pipeline refits per call, ~4.3x); check which one this run used before using its"
+echo "timings, or step 4's --time will be over-requested by roughly that factor."
 
 report_usage
