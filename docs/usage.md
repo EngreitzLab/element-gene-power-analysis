@@ -156,7 +156,7 @@ Run it once per effect size — it refuses input that mixes effect sizes, and re
 
 ## 5. `summarize_power.R`
 
-One row per pair, one `PowerAtEffectSize<N>` column per effect size, plus the smallest tested effect
+One row per pair, one `power_at_effect_size_<N>` column per effect size, plus the smallest tested effect
 size at which each pair reaches a target power.
 
 ```sh

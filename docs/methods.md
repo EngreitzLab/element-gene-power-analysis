@@ -11,7 +11,7 @@ Effect sizes are given as **fractional decreases in expression**: `0.15` means a
 Internally this becomes a *relative expression level* of `1 - effect_size`, which multiplies each
 gene's mean in the perturbed cells. So `0.15` scales expression to 0.85× baseline.
 
-This conversion is the reason the column suffixes read `PowerAtEffectSize15` — the label is
+This conversion is the reason the column suffixes read `power_at_effect_size_15` — the label is
 `effect_size × 100`.
 
 ## Guide-to-guide variability

@@ -4,9 +4,8 @@
 #
 # Without this the pipeline leaves you with a separate file per effect size and no combined view.
 # This recovers the useful half of the old format_sceptre_output.R -- a single table with one
-# PowerAtEffectSize<N> column per effect size, keeping that column naming so existing downstream
-# tooling still matches -- without that script's dependencies on `distances`, `guide_targets` and
-# `features` files, none of which the pipeline produces.
+# power column per effect size -- without that script's dependencies on `distances`,
+# `guide_targets` and `features` files, none of which the pipeline produces.
 #
 # It also derives the quantity the analysis is usually actually after: the smallest tested effect
 # size at which a pair reaches a target power. See --power-threshold.
@@ -75,19 +74,22 @@ tables <- tables[ordering]
 effect_sizes <- effect_sizes[ordering]
 log_step("Merging ", length(tables), " effect size(s): ", paste(effect_sizes, collapse = ", "))
 
-#' Column suffix for an effect size, matching the old format_sceptre_output.R convention
-#' (0.15 -> "15", so the column is PowerAtEffectSize15).
+#' Column suffix for an effect size, as a percentage: 0.15 -> "15", giving the column name
+#' power_at_effect_size_15.
 #'
 #' Trailing zeros are trimmed only *after a decimal point*, so 0.125 -> "12.5" rather than
-#' "12.50". Trimming unconditionally is wrong and quietly so: it turns 0.2 into "2" and 0.5 into
-#' "5", i.e. PowerAtEffectSize2 for a 20 % knockdown.
+#' "12.50". Trimming unconditionally is wrong and quietly so: it would turn 0.2 into "2" and 0.5
+#' into "5", i.e. a column called power_at_effect_size_2 for a 20 % knockdown.
+#'
+#' The decimal point then becomes an underscore (12.5 -> "12_5") to keep every column name
+#' snake_case and free of dots, which several downstream readers treat as name separators.
 effect_label <- function(effect_size) {
   formatted <- format(effect_size * 100, trim = TRUE, scientific = FALSE)
   if (grepl(".", formatted, fixed = TRUE)) {
     formatted <- sub("0+$", "", formatted)
     formatted <- sub("\\.$", "", formatted)
   }
-  formatted
+  gsub(".", "_", formatted, fixed = TRUE)
 }
 
 ## MERGE ===========================================================================================
@@ -129,7 +131,7 @@ for (i in seq_along(tables)) {
   df <- tables[[i]]
   idx <- match(pair_keys, key_of(df))
   label <- effect_label(effect_sizes[i])
-  base <- paste0("PowerAtEffectSize", label)
+  base <- paste0("power_at_effect_size_", label)
   power_columns <- c(power_columns, base)
 
   out[[base]] <- df$power[idx]

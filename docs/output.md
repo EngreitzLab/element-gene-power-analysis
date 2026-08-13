@@ -15,9 +15,9 @@ One row per element–gene pair, one set of columns per effect size.
 | `response_id` | Gene. |
 | `mean_pert_cells` | Mean number of perturbed cells across replicates. |
 | `average_expression_all_cells` | Raw mean expression of the gene across all cells. Not size-factor normalised — see the note below. |
-| `PowerAtEffectSize15` | Power at a 15% knockdown. One column per effect size; the suffix is `effect_size × 100`. |
-| `PowerAtEffectSize15_ci_low`, `_ci_high` | 95% Wilson interval for that estimate. |
-| `PowerAtEffectSize15_n_reps` | Replicates contributing to it. |
+| `power_at_effect_size_15` | Power at a 15% knockdown. One column per effect size; the suffix is `effect_size × 100`, with any decimal point written as an underscore (0.125 → `power_at_effect_size_12_5`). |
+| `power_at_effect_size_15_ci_low`, `_ci_high` | 95% Wilson interval for that estimate. |
+| `power_at_effect_size_15_n_reps` | Replicates contributing to it. |
 | `min_detectable_effect_size` | Smallest **tested** effect size reaching `--power-threshold` (default 0.8). `NA` means no tested effect size did. |
 | `max_effect_size_tested` | The largest effect size in the run, so `NA` above can be interpreted. |
 
