@@ -1,0 +1,105 @@
+#!/usr/bin/env Rscript
+#
+# Guard against silent breakage from a sceptre upgrade.
+#
+# This pipeline reaches into sceptre's *internal* S4 slots rather than going through its
+# public API: it swaps the response matrix for simulated counts, narrows the discovery
+# pairs to one perturbation, and reads the cached negative-binomial precomputations. None
+# of that is part of sceptre's documented interface, so a new sceptre release can change
+# it without a deprecation warning and the pipeline would keep running while producing
+# wrong numbers.
+#
+# This script fails loudly if anything the pipeline depends on has moved. Run it after
+# `pixi run setup` and after any change to the pinned SHA.
+#
+# Usage:  pixi run check-api
+
+suppressPackageStartupMessages(library(sceptre))
+
+failures <- character(0)
+check <- function(ok, label, detail = NULL) {
+  if (isTRUE(ok)) {
+    cat("  ok    ", label, "\n", sep = "")
+  } else {
+    cat("  FAIL  ", label, if (!is.null(detail)) paste0("  <- ", detail) else "", "\n", sep = "")
+    failures <<- c(failures, label)
+  }
+  invisible(ok)
+}
+
+version <- as.character(utils::packageVersion("sceptre"))
+expected_ref <- Sys.getenv("SCEPTRE_REF", unset = NA_character_)
+cat("sceptre version: ", version, "\n", sep = "")
+cat("library path:    ", dirname(system.file(package = "sceptre")), "\n\n", sep = "")
+
+# --- version matches the pin ---------------------------------------------------------
+cat("Version pin\n")
+if (!is.na(expected_ref)) {
+  check(
+    identical(paste0("v", version), expected_ref),
+    paste0("installed version matches SCEPTRE_REF (", expected_ref, ")"),
+    paste0("installed ", version)
+  )
+} else {
+  cat("  skip   SCEPTRE_REF not set (run via `pixi run check-api` to check the pin)\n")
+}
+
+# --- internal S4 slots the pipeline reads or writes -----------------------------------
+# Each entry records *why* the pipeline needs the slot, so a future maintainer can tell
+# whether a sceptre change is fatal or merely needs a rename here.
+required_slots <- c(
+  response_matrix              = "replaced with the simulated count matrix on every rep",
+  covariate_data_frame         = "cell barcodes (rownames) and the optional 'batch' column",
+  covariate_matrix             = "subset alongside covariate_data_frame when sampling controls",
+  grna_target_data_frame       = "gRNA -> target mapping; replaces the old grna_groups_table.rds input",
+  discovery_pairs_with_info    = "pass_qc filtering, and narrowed to one perturbation per test",
+  initial_grna_assignment_list = "per-gRNA cell assignments -> the grna_perts matrix",
+  grna_assignments             = "$grna_group_idxs -> the cre_perts matrix and perturbed-cell counts",
+  cells_in_use                 = "maps grna_group_idxs positions onto SCE columns",
+  response_precomputations     = "cached $theta -> per-gene negative-binomial dispersion",
+  functs_called                = "asserts assign_grnas() has been run"
+)
+
+cat("\nInternal sceptre_object slots\n")
+present <- methods::slotNames("sceptre_object")
+for (slot in names(required_slots)) {
+  check(slot %in% present, paste0("@", slot), required_slots[[slot]])
+}
+
+# --- exported functions the pipeline calls --------------------------------------------
+required_functions <- c(
+  "run_discovery_analysis",   # run once per (perturbation, rep) in the power simulation
+  "get_result",               # pulls the discovery results out afterwards
+  "import_data",              # test-data generator only
+  "set_analysis_parameters",  # test-data generator only
+  "assign_grnas",             # test-data generator only
+  "run_qc"                    # test-data generator only
+)
+
+cat("\nExported functions\n")
+for (fn in required_functions) {
+  check(is.function(tryCatch(get(fn, envir = asNamespace("sceptre")), error = function(e) NULL)), fn)
+}
+
+# --- column names inside discovery_pairs_with_info -----------------------------------
+# Verified against sceptre source (R/pairwise_qc_functs.R): the slot is built with columns
+# response_id, grna_group, n_nonzero_trt, n_nonzero_cntrl, and pass_qc is added by
+# run_qc(). Note that `grna_group` holds the *target* only under the "union" gRNA
+# integration strategy; prepare_sim_input.R asserts that strategy explicitly, because
+# under "singleton" it holds individual gRNA ids and the pairs would be wrong.
+cat("\nAssumptions verified against sceptre source, not testable without a dataset\n")
+cat("  note   @discovery_pairs_with_info columns: response_id, grna_group,",
+    "n_nonzero_trt, n_nonzero_cntrl, pass_qc\n")
+cat("  note   @grna_target_data_frame columns: grna_id, grna_target\n")
+cat("  note   @grna_assignments$grna_group_idxs names == perturbation targets (union strategy)\n")
+cat("         These are exercised end-to-end by `pixi run pipeline-test`.\n")
+
+# --- verdict --------------------------------------------------------------------------
+cat("\n")
+if (length(failures) > 0) {
+  cat("FAILED: ", length(failures), " check(s) did not pass.\n", sep = "")
+  cat("The pinned sceptre version is not compatible with this pipeline. Either revert the\n")
+  cat("pin in pixi.toml, or update the affected scripts and this check together.\n")
+  quit(save = "no", status = 1)
+}
+cat("All checks passed. sceptre ", version, " is compatible with this pipeline.\n", sep = "")
