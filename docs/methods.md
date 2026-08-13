@@ -54,8 +54,11 @@ where
   matrix (DESeq2 itself is not used — `DESeqDataSetFromMatrix()` densifies, which is untenable at
   these dimensions).
 
-Size factors are **shuffled** across cells before use, so simulated library sizes are a draw from
-the observed distribution rather than tied to each cell's identity.
+Each cell keeps **its own** size factor. The pre-refactor code shuffled the size factors across
+cells before use, on the reasoning that simulated library sizes should be a draw from the observed
+distribution rather than tied to each cell's identity. That is incorrect here: `effect_size[i, j]`
+is indexed by cell, so shuffling pairs one cell's perturbation status with a different cell's
+library size and breaks the correspondence the model assumes.
 
 Genes with no cached precomputation are a hard error rather than a silent skip. The previous
 implementation stored dispersions in a list column with `NULL` holes; `unlist()` dropped them,
