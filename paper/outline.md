@@ -277,7 +277,116 @@ essentially never assertable at 100 replicates and a 15 % knockdown.
 
 ---
 
-## 8. Validation and tests
+## 8. Downstream and orthogonal validation
+
+Two independent ways to show the power calls carry real information. §8.1 asks whether they *improve* a
+model the field uses; §8.2 asks whether an entirely different data modality *agrees* with them. They
+share one methodological hazard, discussed once at the end.
+
+### 8.1 Does power-aware labelling make scE2G learn better?
+
+**The experiment.** Train scE2G twice — once with negatives filtered to pairs the screen was actually
+powered to detect, once with negatives taken as-is — and show the power-aware model learns more.
+
+This is the payoff figure. It converts the motivation in §1 from an argument about label noise into a
+measured improvement in a tool the field uses, and it is exactly the use PerturbPlan named and set
+aside ("curating perturbation-gene associations (and non-associations) for predictive model training").
+
+**It is also the easiest result in the paper to dismiss, because filtering changes three things at
+once.** Power-filtered negatives are fewer, and the survivors are systematically higher-expressed and
+better perturbed. A naive two-model comparison cannot separate label quality from training-set size or
+from covariate shift. The controls are the contribution here as much as the result:
+
+| Condition | Negatives used | What it isolates |
+|---|---|---|
+| Baseline | all negatives, unfiltered | current practice |
+| Power-filtered | only negatives with `power_ci_low` ≥ threshold at a stated effect size | the proposed practice |
+| **Size-matched random** | a random subset of unfiltered negatives, same N as power-filtered | separates label quality from set size |
+| **Covariate-matched** | unfiltered negatives matched to the power-filtered set on expression and perturbed-cell decile | separates label quality from covariate shift |
+
+If power-filtering beats the size-matched random condition, the gain is from label *quality*. If it also
+beats the covariate-matched condition, it is not merely that the retained pairs are an easier
+distribution. Without both, a reviewer can attribute the whole effect to having fewer, easier negatives.
+
+**The evaluation set is the subtle part, and getting it wrong inverts the result.** If the held-out test
+set carries the same contaminated labels, a model trained on clean labels will be *penalised* for
+correctly predicting a link that the test set mislabels as a negative. So the test set must itself use
+high-confidence labels: certified negatives (`power_ci_low` ≥ threshold, no call) plus positives.
+Report on both the clean and the contaminated test set — the gap between them is itself a measure of how
+much label noise has been distorting published benchmarks. **[TODO]** check how the ENCODE-rE2G CRISPR
+benchmark currently constructs negatives; if it does not filter on power, that is a substantive finding
+about the benchmark and not only about training.
+
+**Metrics.** AUPRC as primary, given the class imbalance, plus precision at fixed recall. Report
+variability across training seeds and CV folds, since the improvement may be small relative to run-to-run
+spread.
+
+**Honest risk, to state before running it.** The improvement may be small or absent. If scE2G's features
+are already only weakly informative for the pairs that power-filtering removes, cleaning those labels
+changes little. **The paper must not depend on this result being positive** — a null result is still
+informative (it bounds how much label noise costs, which nobody has measured) but it is a weaker
+motivation, so §1 should stand on the contamination rate alone and treat §8 as confirmation.
+
+**Practicalities.** **[NEEDS SCOPE]** scE2G is a lab tool, so retraining should be feasible, but it needs
+someone who knows its training pipeline and feature set. Decide early whether this is our work or a
+collaborator's, since it gates the figure.
+
+<!-- FIGURE 8: downstream impact. (a) AUPRC for the four conditions, on the clean test set, with
+     seed/fold variability. (b) precision-recall curves for baseline vs power-filtered. (c) the same
+     comparison on the contaminated test set, showing how much the benchmark itself is distorted.
+     (d) contamination rate: fraction of a published negative set that could not have reached power 0.8. -->
+
+### 8.2 Do sequence models agree? AlphaGenome and ChromBPNet
+
+**The idea.** Sequence-based models predict regulatory effects without seeing the CRISPR screen at all.
+So they can test the power calls using an *independent modality*, with no new CRISPR compute.
+
+**The prediction, stated so it can fail.** Partition the pairs the screen did **not** call into two
+groups and compare their predicted effects:
+
+| Group | What the screen says | What a sequence model should say if our power calls are right |
+|---|---|---|
+| Certified negatives (`power_ci_low` ≥ threshold, no call) | "there is no link" | predicted effects concentrated near zero |
+| Underpowered non-calls (no call, no power) | "we cannot tell" | a **mixture** — a heavier right tail, since real regulators are hidden here |
+
+So the testable claim is that the predicted-effect distribution for underpowered non-calls is shifted
+upward relative to certified negatives, and that certified negatives look like the sequence models'
+genuine nulls. If the two groups are indistinguishable, either our power calls are not separating
+anything or the sequence models cannot resolve this regime — and distinguishing those two explanations
+needs the positives as a reference, so include them.
+
+**The two models answer different questions and should not be pooled:**
+
+- **AlphaGenome** predicts multi-modal outputs including expression from sequence and supports in-silico
+  perturbation, so it can be asked directly "does perturbing this element change *this gene*?" — the
+  same object as our pairs. This is the one that matches.
+- **ChromBPNet** predicts chromatin accessibility, i.e. "is this element active at all?" That is a
+  weaker, element-level question, and turning it into an element→gene effect requires a linking model,
+  which reintroduces the thing being tested. Use it for the element-level claim in §7 (how well was this
+  element perturbed / is it a real element) rather than for pair-level agreement.
+
+**[NEEDS SCOPE]** AlphaGenome access and whether in-silico element perturbation is exposed for our
+element coordinates; ChromBPNet models for the relevant cell types (K562, WTC11) — Kundaje lab, so
+plausibly available locally.
+
+<!-- FIGURE 9: sequence-model agreement. (a) predicted effect distributions for positives, certified
+     negatives, and underpowered non-calls -- expression-matched. (b) the same, stratified by measured
+     power decile, to show a dose-response rather than a two-group difference. (c) ChromBPNet element
+     activity for elements with vs without any powered pair. -->
+
+### The hazard both experiments share
+
+Power correlates strongly with gene expression — expression alone explains 83.7 % of the variance in the
+curve parameter (§6). Both scE2G features and sequence-model predictions also correlate with expression
+and promoter activity. **So any difference between powered and underpowered pairs could be entirely an
+expression effect rather than anything about regulation.** Neither experiment is interpretable without
+matching, at minimum, on expression and distance to TSS, and reporting the comparison *within* strata
+rather than pooled. A dose-response across power deciles (Figure 9b) is more convincing than a
+two-group split, because a monotone trend is harder to produce by confounding alone.
+
+---
+
+## 9. Validation and tests
 
 The "solid tests" section. What must be in it:
 
@@ -298,16 +407,16 @@ The "solid tests" section. What must be in it:
 - **Comparison against a reference implementation.** **[NEEDS DATA]** old vs new pipeline,
   distributional rather than exact since the RNG stream differs.
 
-<!-- FIGURE 8 (supplementary): the null-model trap. (a) p-value agreement looks fine in aggregate
+<!-- FIGURE 10 (supplementary): the null-model trap. (a) p-value agreement looks fine in aggregate
      (Spearman 0.999). (b) the same data at the call level, showing one-directional flips. The
      pedagogical point: correlation hides the thing that matters. -->
 
-<!-- FIGURE 9 (supplementary): cost. measured runtime per call against pairs per call, the three null
+<!-- FIGURE 11 (supplementary): cost. measured runtime per call against pairs per call, the three null
      model configurations, and the implied CPU-hours per effect size. -->
 
 ---
 
-## 9. Discussion
+## 10. Discussion
 
 - What the method licenses: per-pair negative claims with a stated effect-size bound; power-aware
   training labels; power as a covariate rather than a confounder.
