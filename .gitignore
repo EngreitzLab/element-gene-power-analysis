@@ -19,6 +19,23 @@ prepared/
 # Debug workspaces written by the old Snakemake scripts (save.image()). No longer produced.
 RDA_objects/
 
+# Cluster job logs. Every sbatch script in workflow/slurm_executor/ writes here, and the old
+# Snakemake master job wrote MB-scale .err files.
+logs/
+
+# Snakemake's own state directory, including its per-rule conda environments. Left behind by runs
+# of the pre-refactor pipeline.
+.snakemake/
+
+# Leftovers from the pre-refactor pipeline and from working on the cluster: the old Snakemake
+# submitter, a hand-kept backup of results/, conda environment dumps of the `base-nnfc` env that
+# drove it, and an empty file created by a stray redirect.
+submit_snakemake_job.sh
+submit_snakemake_job.sh.bak
+results_bak/
+base-nnfc.*.yml
+/bash
+
 # R
 .Rhistory
 .Rapp.history
