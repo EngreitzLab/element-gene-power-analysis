@@ -1,47 +1,60 @@
-# History files
+# pixi environment. pixi.toml and pixi.lock ARE tracked; the solved environment is not.
+.pixi/
+
+# Nextflow
+work/
+.nextflow/
+.nextflow.log*
+report.html*
+timeline.html*
+trace.txt*
+dag.html*
+
+# Pipeline inputs and outputs. Input sceptre objects are hundreds of MB and must never be
+# committed -- the pre-commit hook enforces a 512 KB ceiling as a backstop.
+results/
+prepared/
+*.rds
+
+# Debug workspaces written by the old Snakemake scripts (save.image()). No longer produced.
+RDA_objects/
+
+# R
 .Rhistory
 .Rapp.history
-
-# Session Data files
 .RData
 .RDataTmp
-
-# User-specific files
 .Ruserdata
-.DS_Store
-
-# Example code in package build process
-*-Ex.R
-
-# Output files from R CMD build
-/*.tar.gz
-
-# Output files from R CMD check
-/*.Rcheck/
-
-# RStudio files
+.Renviron
 .Rproj.user/
+*-Ex.R
+/*.tar.gz
+/*.Rcheck/
+*_cache/
+/cache/
+*.utf8.md
+*.knit.md
 
-# produced vignettes
+# Jekyll build output for the GitHub Pages site. NOTE: docs/ itself is tracked -- the R
+# template's blanket `docs/` ignore (for pkgdown) has been removed, because docs/ is the
+# published documentation source.
+docs/_site/
+docs/.jekyll-cache/
+docs/.jekyll-metadata
+.bundle/
+vendor/
+
+# OS / editor
+.DS_Store
+*.swp
+*~
+
+# Vignettes
 vignettes/*.html
 vignettes/*.pdf
 
 # OAuth2 token, see https://github.com/hadley/httr/releases/tag/v0.3
 .httr-oauth
-
-# knitr and R markdown default cache directories
-*_cache/
-/cache/
-
-# Temporary files created by R markdown
-*.utf8.md
-*.knit.md
-
-# R Environment Variables
-.Renviron
-
-# pkgdown site
-docs/
 
 # translation temp files
 po/*~
