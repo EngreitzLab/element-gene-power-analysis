@@ -138,6 +138,9 @@ Pages build ever breaks, replacing `remote_theme` with `theme: jekyll-theme-prim
 
 ## Known gaps
 
+A fuller account, with the commands to run the outstanding comparisons on a cluster, is in
+[Status and handoff]({{ site.baseurl }}{% link status.md %}).
+
 - **Workflow orchestration.** The five steps are complete and run standalone; a Nextflow workflow
   with a SLURM profile is not yet in the repository. `config/config.yml` already carries the
   parameters it will consume.

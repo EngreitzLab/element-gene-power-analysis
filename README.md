@@ -111,6 +111,10 @@ wire them together is in progress; `config/config.yml` already holds the paramet
 The `Snakefile`, `rules/` and `R/` directories are the previous implementation, kept temporarily so
 results can be compared against it. They are superseded by `bin/` and will be removed.
 
+**[Status and handoff](https://engreitzlab.github.io/element-gene-power-analysis/status/)** has the
+full picture: what is done and verified, what is left, reference numbers for sizing a cluster run,
+ready-to-use SLURM array scripts, and how to run the old-vs-new comparison.
+
 ## Documentation
 
 - [Usage](https://engreitzlab.github.io/element-gene-power-analysis/usage/) — every parameter, and running each step by hand
