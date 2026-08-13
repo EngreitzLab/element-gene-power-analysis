@@ -10,8 +10,11 @@ platforms = ["linux-64", "osx-arm64"]
 # verified by `pixi run check-api`. See docs/development.md.
 [activation.env]
 R_LIBS_USER = "$PIXI_PROJECT_ROOT/.pixi/rlibs"
-SCEPTRE_REF = "v0.10.3"
-SCEPTRE_SHA = "9faa4373d1b72164b630fa03c597e52e668a4e03"
+# SCEPTRE_REF is the DESCRIPTION version at the pinned commit, not a git tag: 0.99.0 is the
+# in-development Bioconductor-prep version on `main` and is untagged (v0.10.3 is still the newest
+# tag). check_sceptre_api.R compares it against packageVersion("sceptre").
+SCEPTRE_REF = "v0.99.0"
+SCEPTRE_SHA = "3ba046b86f33e99dee633fbb8704ee8defdb442d"
 
 # Runtime dependencies. Kept deliberately small: our own scripts use base R for all file
 # I/O and data manipulation (read.delim/write.table/merge/aggregate) rather than pulling in
@@ -33,6 +36,13 @@ r-dplyr = "*"         # s4_analysis_functs_*, pairwise_qc_functs, import_functs,
 "r-data.table" = "*"  # medium_level_functs_v2, pairwise_qc_functs, aux_functions
 r-purrr = "*"         # purrr::flatten() in medium_level_functs_v2.R:123,205 (precomputation path)
 r-crayon = "*"        # console messages in check_functions, import_functs, s4_helpers
+# Added by sceptre 0.99.0. Both are in its DESCRIPTION Imports, which R CMD INSTALL enforces, and
+# both are reached at runtime rather than only at build time: parallelly::availableCores() replaced
+# parallel::detectCores() for core detection (aux_functions.R), and withr::with_seed/with_options
+# are used throughout. The lower bound is not the DESCRIPTION's >=1.23.0 but the >=1.47.0 that
+# aux_functions.R's own comment calls for; conda-forge resolves to 1.48.0, which satisfies both.
+r-parallelly = ">=1.47.0"
+r-withr = "*"
 
 # No Bioconductor packages are required. The old pipeline used SingleCellExperiment purely
 # as a container -- a per-gene table, a per-cell table, two sparse perturbation matrices,

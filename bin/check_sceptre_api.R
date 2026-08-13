@@ -81,6 +81,38 @@ for (fn in required_functions) {
   check(is.function(tryCatch(get(fn, envir = asNamespace("sceptre")), error = function(e) NULL)), fn)
 }
 
+# --- the local patches in patches/ ----------------------------------------------------
+# The installed sceptre is the pinned commit plus the patches in patches/, applied by
+# bin/install_sceptre.R. Their whole point is that they are inert unless used, which also
+# means their absence is silent: an unpatched sceptre would reject
+# `grna_precomputations = ...` as an unused argument, but only at the moment the simulation
+# calls it -- after prepare_sim_input.R and split_pairs.R have already run. Check here instead.
+cat("\nLocal patches (patches/*.patch, applied by install_sceptre.R)\n")
+
+patch_stamp <- tryCatch(utils::packageDescription("sceptre")$LocalPatches, error = function(e) NULL)
+check(
+  !is.null(patch_stamp) && nzchar(patch_stamp) && !identical(patch_stamp, "none"),
+  "DESCRIPTION records LocalPatches",
+  if (identical(patch_stamp, "none")) {
+    "this is a STOCK build (SCEPTRE_PATCH_DIR was empty); re-run `pixi run setup`"
+  } else {
+    "installed sceptre carries no patch fingerprint; re-run `pixi run setup`"
+  }
+)
+if (!is.null(patch_stamp) && nzchar(patch_stamp)) cat("         ", patch_stamp, "\n", sep = "")
+
+check(
+  is.function(tryCatch(get("compute_grna_precomputations", envir = asNamespace("sceptre")),
+                       error = function(e) NULL)),
+  "compute_grna_precomputations() is exported",
+  "0001-reuse-grna-precomputation.patch is not applied"
+)
+check(
+  "grna_precomputations" %in% names(formals(sceptre::run_discovery_analysis)),
+  "run_discovery_analysis() accepts `grna_precomputations`",
+  "0001-reuse-grna-precomputation.patch is not applied"
+)
+
 # --- column names inside discovery_pairs_with_info -----------------------------------
 # Verified against sceptre source (R/pairwise_qc_functs.R): the slot is built with columns
 # response_id, grna_group, n_nonzero_trt, n_nonzero_cntrl, and pass_qc is added by

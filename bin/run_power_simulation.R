@@ -78,6 +78,14 @@ option_list <- list(
               help = "RNG seed. Required: results are stochastic and must be reproducible."),
   make_option("--out", type = "character", default = NULL, dest = "out",
               help = "Output TSV, one row per (pair, rep)."),
+  make_option("--no-grna-precomp-reuse", action = "store_false", default = TRUE,
+              dest = "grna_precomp_reuse",
+              help = paste("Refit the gRNA null model inside every call instead of once per",
+                           "target. sceptre regresses perturbation status on the covariates to get",
+                           "the probabilities it draws synthetic assignments from; that fit does",
+                           "not depend on the counts, so it is identical for every rep of a",
+                           "target. Reuse is on by default and is exact -- this flag exists to",
+                           "demonstrate that, by showing the p-values are unchanged.")),
   make_option("--gc-every", type = "integer", default = 0L, dest = "gc_every",
               help = paste("Call gc() every N reps. 0 disables it [default %default]. The",
                            "original called gc() on every rep to contain allocation churn that",
@@ -258,6 +266,30 @@ for (target in targets) {
     target_template@grna_assignments$grna_group_idxs[[target]] <- seq_len(n_pert_cells)
   }
 
+  # --- the gRNA null model, fitted once for this target ----------------------------------------
+  # sceptre regresses perturbation status on the covariates and draws the synthetic assignments
+  # from the fitted probabilities. Both inputs are fixed for the whole rep loop -- the covariate
+  # matrix and cells_in_use come from the template, and the assignments from grna_group_idxs -- and
+  # neither depends on the simulated counts, so the fit is identical on every rep. Unpatched sceptre
+  # refits it inside all `opts$reps` calls; `grna_precomputations` hands it the same answer instead.
+  # See patches/0001-reuse-grna-precomputation.patch.
+  #
+  # Note this must come *after* the sampled-control block above, which rewrites both the covariate
+  # matrix and grna_group_idxs.
+  #
+  # Only the fit is reused. crt_index_sampler_fast() still runs per call, so the synthetic
+  # assignments are redrawn every rep and the resampling distribution is untouched.
+  #
+  # The cache holds regression coefficients, not per-cell fitted probabilities: one target's
+  # probabilities would be one double per cell, and the whole point is that this stays negligible
+  # next to the count matrix. sceptre reconstructs the probabilities from them bit-identically.
+  grna_precomp <- if (isTRUE(opts$grna_precomp_reuse)) {
+    compute_grna_precomputations(target_template, analysis = "discovery_analysis",
+                                 grna_targets = target)
+  } else {
+    NULL
+  }
+
   for (rep_local in seq_len(opts$reps)) {
     rep_id <- opts$rep_offset + rep_local
 
@@ -285,12 +317,27 @@ for (target in targets) {
       sceptre_use@response_precomputations <- null_precomp[[as.character(rep_id)]]
     }
 
-    # run_discovery_analysis() cat()s a "consider parallel = TRUE" note on every call. Left
-    # unchecked that is one line per (target, rep) -- 279,800 lines per effect size on sample1.
-    invisible(utils::capture.output(
-      sceptre_use <- run_discovery_analysis(sceptre_object = sceptre_use, parallel = FALSE,
-                                           print_progress = FALSE)
-    ))
+    # run_discovery_analysis() emits a "consider parallel = TRUE" note on every call, and
+    # print_progress = FALSE does not silence it -- it is gated on `parallel` alone. Left unchecked
+    # that is one line per (target, rep): 279,800 per effect size on sample1.
+    #
+    # Both wrappers are needed, and which one does the work depends on the sceptre version. Up to
+    # v0.10.3 the note was cat()ed to stdout, which capture.output() catches; sceptre 0.99.0 turned
+    # most cat() calls into message(), which goes to stderr and slips straight past
+    # capture.output(). Keeping both means the pin can move either way without silently
+    # reintroducing 279,800 lines of log.
+    # `grna_precomputations` is only passed when there is a cache to pass. Unpatched sceptre has no
+    # such argument and would reject it as unused, so building the argument list conditionally is
+    # what lets --no-grna-precomp-reuse run against a stock sceptre -- which is how the patch's
+    # effect can be isolated from the sceptre version's. check_sceptre_api.R still asserts the
+    # patch is present, so this is graceful degradation, not a silent fallback.
+    discovery_args <- list(sceptre_object = sceptre_use, parallel = FALSE, print_progress = FALSE)
+    if (!is.null(grna_precomp)) {
+      discovery_args$grna_precomputations <- grna_precomp
+    }
+    suppressMessages(invisible(utils::capture.output(
+      sceptre_use <- do.call(run_discovery_analysis, discovery_args)
+    )))
     discovery_result <- get_result(sceptre_object = sceptre_use,
                                    analysis = "run_discovery_analysis")
 

@@ -168,9 +168,12 @@ for (rep_local in seq_len(opts$reps)) {
 
   # run_discovery_analysis() is the only public route to a precomputation: it fits the null model as
   # a side effect and leaves it in the slot. The test results are discarded -- we want the fit.
-  invisible(utils::capture.output(
+  #
+  # Both wrappers are needed: sceptre's "consider parallel = TRUE" note was cat()ed to stdout up to
+  # v0.10.3 but is message()d to stderr from 0.99.0, and capture.output() only catches the former.
+  suppressMessages(invisible(utils::capture.output(
     obj <- run_discovery_analysis(sceptre_object = obj, parallel = FALSE, print_progress = FALSE)
-  ))
+  )))
 
   fitted <- obj@response_precomputations
   missing_genes <- setdiff(genes, names(fitted))

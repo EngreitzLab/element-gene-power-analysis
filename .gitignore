@@ -78,3 +78,7 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Backup written by workflow/slurm_executor/00b_relock_env.sbatch before it re-solves the lock.
+# The committed pixi.lock is the record; this is only a local undo for a bad solve.
+pixi.lock.before-relock

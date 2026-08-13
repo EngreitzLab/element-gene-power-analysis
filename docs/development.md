@@ -77,6 +77,57 @@ Two behaviours of sceptre worth knowing before touching the simulation:
 - **With `run_permutations = FALSE`** the conditional-randomisation path reads
   `response_matrix@j/@p/@x` directly, which only a `dgRMatrix` has.
 
+## sceptre is also patched
+
+The installed sceptre is the pinned commit **plus** the patches in `patches/`, applied by
+`bin/install_sceptre.R` before it compiles. Each patch adds an optional argument with a `NULL`
+default, so unpatched sceptre behaves identically and nothing in `patches/` changes any result.
+
+| Patch | What it adds |
+| --- | --- |
+| `0001-reuse-grna-precomputation.patch` | `grna_precomputations` on `run_discovery_analysis()` and `run_power_check()`, and an exported `compute_grna_precomputations()`. Lets the caller supply the gRNA null model instead of having sceptre refit it once per call. |
+
+Why a patch rather than a wrapper: on the CRT path sceptre regresses perturbation status on the
+covariates and draws its synthetic assignments from the fitted probabilities. That fit depends only
+on the gRNA-to-cell assignments and the covariate matrix, never on the counts, so it is identical
+for all `--reps` replicates of a target. But unlike `@response_precomputations` there was no slot to
+hand it back in through — `fitted_probabilities` is a local variable in
+`crt_glm_factored_out()` — so reusing it needs a signature change.
+
+The cache holds regression **coefficients**, not per-cell fitted probabilities, and each entry
+records the `n_cells` it was fitted over. Both choices matter:
+
+- Fitted values are one double per cell. Coefficients are `ncol(covariate_matrix)` doubles, and
+  sceptre reconstructs the probabilities from them with `binomial()$linkinv(drop(X %*% coefs))`,
+  which is bit-identical — `glm.fit()` computes the `fitted.values` it returns exactly that way from
+  the vector it returns as `coefficients`, with a zero offset here.
+- `n_cells` is what makes the guard work. The two CRT workhorses fit on *different cell sets* but the
+  same covariates, so the coefficient vector is the same length in both and its length alone cannot
+  tell a cache built for one from a cache built for the other.
+
+`--no-grna-precomp-reuse` on `run_power_simulation.R` turns the reuse off. Reuse is exact, so the
+flag exists to demonstrate that rather than to work around it —
+`workflow/slurm_executor/10_grna_precomp_equivalence.sbatch` runs one split both ways and compares
+the outputs byte for byte.
+
+Three things to know:
+
+- **The patches are part of the pin.** `bin/install_sceptre.R` refuses to install if `patches/` is
+  empty, and `bin/check_sceptre_api.R` asserts that `compute_grna_precomputations()` is exported and
+  that `run_discovery_analysis()` accepts `grna_precomputations`. Without that second check an
+  unpatched sceptre would fail only once the simulation reached its first
+  `run_discovery_analysis()` call, long after `prepare_sim_input.R` and `split_pairs.R` had run.
+- **Bumping `SCEPTRE_SHA` means regenerating the patches.** They are applied with no fuzz and no
+  offset search (`bin/lib/apply_patch.R`), so a hunk that no longer matches at the exact line it
+  claims is a hard error rather than a hunk relocated to somewhere it happens to fit.
+- **`patch(1)` is not used.** Everything runs inside a stock `ubuntu:22.04` container, which ships
+  neither `patch` nor `git`, so `bin/lib/apply_patch.R` applies the diff in R.
+
+Upstreaming these to Katsevich-Lab/sceptre is wanted but deliberately deferred. The plan is in
+`scalable-baking-key.md` (untracked) and is **not yet implemented upstream** — note it targets
+`upstream/main` (v0.99.0, reformatted end to end), not the v0.10.3 pinned here, so the patch is a
+starting point for that diff rather than the diff itself.
+
 ## Repository layout
 
 ```
@@ -87,6 +138,8 @@ bin/lib/                  shared code, sourced by script-relative path
   pert_input.R            per-target cell selection
   simulate.R              count simulation and guide-level effect sizes
   sceptre_io.R            the only file that touches sceptre internals
+  apply_patch.R           unified-diff applier, for patching sceptre at install time
+patches/                  local patches to the pinned sceptre, applied by install_sceptre.R
 config/config.yml         pipeline parameters
 assets/samplesheet.csv    example samplesheet
 docs/                     this documentation (published to GitHub Pages)
