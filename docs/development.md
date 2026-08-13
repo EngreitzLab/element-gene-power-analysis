@@ -102,7 +102,8 @@ identically whether run directly or staged onto `PATH` by a workflow engine.
 **auto-fixed** for:
 
 - CRLF and lone CR → LF
-- tabs → 4 spaces (source files only; `.tsv`/`.csv` are data and `Makefile` needs tabs)
+- tabs → spaces, at the width conventional for the language: **2 for R and YAML**, 4 otherwise
+  (source files only; `.tsv`/`.csv` are data and `Makefile` needs tabs)
 - trailing whitespace
 - missing final newline
 
@@ -117,8 +118,10 @@ The identifier check deliberately allows `SCREAMING_SNAKE` constants (`PERT_LEVE
 methods (`print.sim_input`), both of which are correct R style. `pixi run lint` runs the same checks
 across every tracked file.
 
-Note that existing R code is indented with **2 spaces**, following common R practice; the hook
-converts tabs to 4 spaces but does not reindent.
+R code is indented with **2 spaces**, following tidyverse and Google R style. YAML uses 2 as well
+(and forbids tabs outright); shell, Groovy/Nextflow, Python and JSON use 4. The hook expands tabs to
+the matching width so a stray tab does not end up fighting the surrounding style, but it does not
+reindent existing code.
 
 ## Documentation
 

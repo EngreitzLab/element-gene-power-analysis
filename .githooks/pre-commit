@@ -4,7 +4,7 @@
 #
 # Auto-fixes (staged files are rewritten and re-staged):
 #   * CRLF and CR line endings -> LF
-#   * tabs -> 4 spaces
+#   * tabs -> spaces, at the width conventional for the language (2 for R and YAML, 4 otherwise)
 #   * trailing whitespace removed
 #   * missing final newline added
 #
@@ -26,6 +26,16 @@ is_source_file() {
     case "$1" in
         *.R|*.r|*.nf|*.sh|*.bash|*.py|*.yml|*.yaml|*.toml|*.md|*.config|*.json) return 0 ;;
         *) return 1 ;;
+    esac
+}
+
+# Indent width per language, so expanded tabs match the surrounding code rather than fighting it.
+# R conventionally uses 2 spaces (tidyverse and Google R style both), and YAML uses 2 by convention
+# and forbids tabs outright. Everything else gets 4.
+tab_width_for() {
+    case "$1" in
+        *.R|*.r|*.yml|*.yaml) echo 2 ;;
+        *) echo 4 ;;
     esac
 }
 
@@ -91,10 +101,11 @@ while IFS= read -r file; do
     # --- whitespace auto-fixes ------------------------------------------------------------------
     if is_source_file "$file"; then
         before=$(cksum < "$file")
-        perl -i -pe '
+        TAB_WIDTH=$(tab_width_for "$file") perl -i -pe '
+            my $w = $ENV{TAB_WIDTH};
             s/\r\n$/\n/;                      # CRLF -> LF
             s/\r/\n/g;                        # lone CR -> LF
-            1 while s/\t/" " x (4 - (length($`) % 4))/e;   # tabs -> 4-column stops
+            1 while s/\t/" " x ($w - (length($`) % $w))/e;   # tabs -> next tab stop
             s/[ \t]+$//;                      # trailing whitespace
         ' "$file"
         # Ensure the file ends with exactly one newline.
