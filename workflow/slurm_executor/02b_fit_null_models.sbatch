@@ -4,7 +4,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=16G
+#SBATCH --mem=10G
 #SBATCH --time=02:00:00
 #SBATCH --output=logs/refactor/%x-%A_%a.out
 #SBATCH --error=logs/refactor/%x-%A_%a.err
@@ -32,8 +32,9 @@
 # RESOURCES
 #
 # Measured peak R heap is 6.6 GB -- more than the ~2.2 GB the count matrix (237 x 586,309 doubles)
-# and the all-ones effect-size matrix account for, the rest being sceptre's own working copies. 16G
-# leaves ~2.4x headroom. 2 hours against a measured 17 minutes covers a slow node.
+# and the all-ones effect-size matrix account for, the rest being sceptre's own working copies. 10G
+# leaves ~1.5x headroom. Scale it with the gene count if a dataset has many more than 237 tested genes,
+# since the count matrix is genes x cells. 2 hours against a measured 17 minutes covers a slow node.
 #
 # Usage:  sbatch --array=1-100 workflow/slurm_executor/02b_fit_null_models.sbatch
 #         (or let 02b_submit.sh compute the range from config.sh)

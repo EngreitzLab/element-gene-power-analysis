@@ -4,7 +4,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=4G
+#SBATCH --mem=1G
 #SBATCH --time=00:30:00
 #SBATCH --output=logs/refactor/%x-%A.out
 #SBATCH --error=logs/refactor/%x-%A.err
