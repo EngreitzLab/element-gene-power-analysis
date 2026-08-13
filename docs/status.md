@@ -148,11 +148,12 @@ Two measured facts follow:
 
 - That fit is **59 % of the total call time** — `glm.fit` is 27 % self / 59 % total under `Rprof`,
   against 7 % for our own `rnbinom` draws. It is the single largest cost in the pipeline.
-- `sceptre_template.rds` **inherits 272 precomputations from the real discovery analysis**, so for
-  whatever subset of genes that cache covers, simulated counts are being tested against coefficients
-  fitted to *real* counts, and for the rest sceptre refits on the simulated counts. That is
-  inconsistent across genes, and it is not what a faithful emulation would do: the real analysis fits
-  its null model on the data it is given.
+- `sceptre_template.rds` **inherits 272 precomputations from the real discovery analysis, and they
+  cover all 237 genes that have QC-passing pairs — none are refitted.** So every simulated count is
+  tested against coefficients fitted to *real* counts. Measured directly by job `38854980`: 237 of
+  237 present, 0 absent. The bias is therefore uniform rather than mixed across genes, which is
+  easier to reason about but no more correct — a faithful emulation fits its null model on the data
+  it is given, and the real analysis did exactly that.
 
 It is not a rounding-level choice. Swapping the cache contents on one target moved p-values by up to
 0.94 with a Spearman correlation of 0.22 — the resulting power numbers would be materially different.
