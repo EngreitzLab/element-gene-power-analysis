@@ -5,6 +5,47 @@ The flow, section by section. Placeholders only — no drafted prose. Figure pla
 
 ---
 
+## §0. Positioning — this is retrospective power, not experimental design
+
+**State this in the abstract and again in the first paragraph of §2.** It is the single sentence that
+separates this work from PerturbPlan (Niu et al. 2026), and a reader who misses it will think the two
+papers do the same thing.
+
+| | PerturbPlan | This work |
+|---|---|---|
+| When it is used | **before** the experiment | **after** the experiment |
+| Question | "how should I build the screen?" | "given the screen that ran, what does this uncalled pair mean?" |
+| Granularity | aggregate — power averaged over pairs of interest | **per element–gene pair** |
+| Inputs | design parameters chosen by the user (cells, MOI, reads, gRNAs per target) | quantities **measured** in the completed screen (perturbed cells, expression, dispersion) |
+| Output | power for a candidate design | minimum detectable effect size per pair, with an interval |
+| Effect size | an assumption supplied as input ("minimum FC of interest") | the axis being solved for |
+
+The two are complements, not competitors: one chooses the experiment, the other interprets it. Say so
+explicitly and cite them as such — it is a stronger and more accurate framing than staking a claim to
+novelty they would dispute, and their own paper leaves retrospective analysis out of scope.
+
+### The objection this framing invites, and the answer
+
+"Post hoc power" is a term with a bad reputation in statistics, and for a good reason: computing power
+at the *observed* effect size is circular, because it is a deterministic function of the p-value and
+therefore adds no information (Hoenig & Heisey 2001, *The Abuse of Power*). A reviewer will raise this.
+**[TODO]** get that citation properly and confront it head-on in §2 rather than waiting for review.
+
+The answer is that this is not observed power:
+
+- Power is evaluated at **pre-specified** knockdown magnitudes — a fixed grid of effect sizes chosen
+  before looking at any pair's result — not at whatever effect the data happened to show.
+- The quantity reported is a **minimum detectable effect size**, which is a statement about the
+  experiment's resolution for that pair, not a restatement of its p-value.
+- It is therefore a *sensitivity* or *detectability* analysis in the design-analysis sense, computed
+  after the fact because that is when the covariates are known — not an attempt to rescue a null result
+  by recomputing its power.
+
+Prefer the language of **detectability** and **minimum detectable effect size** over "post hoc power"
+throughout, while naming the term once so readers can locate the work in the literature.
+
+---
+
 ## 1. Why power matters for element–gene screens
 
 **The setup.** Single-cell CRISPRi screens test element–gene pairs and return a p-value per pair.
@@ -42,8 +83,11 @@ link absent, or could the experiment not have seen one?
 
 ## 2. What exists today
 
-**[NEEDS DATA — literature search not yet done.]** The claim "there is no satisfying method to
-quantify power for element–gene pairs" must be established, not assumed. What to cover:
+**Search done — see `literature.md`. The claim as originally framed does not survive, and §2 must be
+rewritten around the narrower, true gap:** methods exist for *prospective, aggregate* power; none give
+*retrospective, per-pair* detectability with quantified uncertainty.
+
+Open with the positioning table from §0, then cover:
 
 - **scPower** (Schmid et al.) — design-stage power for single-cell DE/eQTL studies. The comparison
   reviewers will demand. Establish precisely what it does and does not do: our reading is that it

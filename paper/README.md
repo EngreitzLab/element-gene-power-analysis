@@ -9,9 +9,17 @@ figure list with, for each panel, the data and script that would produce it and 
 
 In one sentence, as currently understood:
 
-> Power for element–gene pairs in single-cell CRISPRi screens can be quantified per pair, cheaply
-> enough to run at screen scale, and **predicted for pairs that were never simulated** — including
-> `trans` pairs, where direct simulation is infeasible.
+> **Retrospective**, per-pair detectability for element–gene pairs in single-cell CRISPRi screens can be
+> quantified cheaply enough to run at screen scale, and **predicted for pairs that were never
+> simulated** — including `trans` pairs, where direct simulation is infeasible.
+
+**The positioning that must never be dropped:** this is about interpreting a screen that has already
+run, not about designing one. PerturbPlan (Niu et al. 2026, with Engreitz and Katsevich as co-authors)
+covers prospective design with an analytical formula and reports power *averaged over pairs*; it
+explicitly leaves retrospective analysis, and the curation of non-associations for model training, out
+of scope. The two are complements. See `outline.md` §0 for the full contrast table, including the
+"post hoc power is circular" objection and why it does not apply here — we evaluate power at
+*pre-specified* effect sizes, not at the observed one.
 
 The three supporting claims, in the order they appear:
 

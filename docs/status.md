@@ -96,11 +96,12 @@ Needed to size cluster runs. Measured, not estimated. The right-hand column is S
 | Perturbed cells per pair | median 396 (IQR 195–542, max 1,927) | |
 | Discovery p-value threshold | 7.71404 × 10⁻⁴ | |
 | One `run_discovery_analysis()` call | 3.4–4.8s | **~9.7s** |
-| Cost model, per (target, replicate) | — | **4.91s + 0.459s × pairs** (R² = 0.968, 36 targets); **3.66s + 0.512s × pairs** when the per-target setup is timed separately |
+| Cost model, per (target, replicate) | — | **5.076s + 0.5923s × pairs** — fitted on the *full* 999-task array at 100 replicates, and the number to use. Superseded: 4.91s + 0.459s × pairs (36-target smoke test) and 3.66s + 0.512s × pairs (3 profiled targets) |
 | Per-target setup, once | — | **2.8–3.0s** (0.03s per replicate at 100 reps) |
 | Where a call spends its time | — | **`glm.fit` 59 %** total / 27 % self, `rnbinom` 7 % — measured *with* the inherited cache, so this is not the skipped per-gene null fit; see the null-model section |
-| **Total at 100 replicates** | ~295 CPU-h per effect size | **~858 CPU-h per effect size** |
-| Peak RAM, simulation task | 1.5 GB → request 4 GB | ~1.9 GB heap → 8 GB requested |
+| **Total at 100 replicates** | ~295 CPU-h per effect size | **999 CPU-h per effect size — measured, not modelled** (`sacct` over the 999 completed tasks of job `38849611`; the fitted model independently gives 1,001) |
+| Per-task wall clock, measured | — | median **57.2 min**, mean 60.0, p95 85.4, max **110.1** (4 h requested → 3 h is ample) |
+| Peak RAM, simulation task | 1.5 GB → request 4 GB | **median 2.27 GB, max 3.27 GB over 1,000 tasks** (8 GB requested → 6 GB keeps 1.8× headroom) |
 | Peak RAM, `prepare_sim_input.R` | 7.7 GB → request 12 GB | 16 GB requested, ~70s |
 
 **The ~295 CPU-hour figure was a laptop measurement and is roughly 3× optimistic.** Sherlock's
@@ -390,14 +391,19 @@ are orthogonal.
 
 **Three things to check before building it.**
 
-1. **413 CPU-h was an upper bound, and profiling has since brought it down to ~308.** The 4.91s
-   intercept was fitted to the step 3 smoke test, which ran **2 replicates** per target, so the
-   per-target setup outside the replicate loop (`pert_input`, `create_guide_pert_status`,
-   `subset_genes` — `run_power_simulation.R` lines 163–188) was amortized over 2 reps, not 100.
-   Timing that setup separately puts it at **2.8–3.0s once per target**, i.e. 0.03s per replicate at
-   100 reps — negligible. Re-fitting the model on three profiled targets gives **3.66s + 0.512s ×
-   pairs**, so the genuinely recoverable per-call overhead is ~308 CPU-h and **Step 9's ceiling is
-   ~1.5×, not 1.77×**. The three-target fit is thin; the 100-replicate array will settle it.
+1. **Settled by the array: the per-call overhead is 427 CPU-h and Step 9's ceiling is 1.63×.**
+   Fitting `time = reps × (a × targets + b × pairs)` over all 999 completed tasks gives
+   **5.076s + 0.5923s × pairs** per (target, replicate) — 1,001 CPU-h predicted against 999 measured,
+   so the model is sound. The per-target term is **427 CPU-h, 42.6 % of the bill**.
+
+   Batching 302,600 calls into ~30,000 leaves ~42 CPU-h of overhead, so
+   427 + 574 → 42 + 574 ≈ **616 CPU-h, a 1.63× saving worth ~385 CPU-h** per effect size.
+
+   This **refutes the previous revision of this point**, which used a three-target profiled fit
+   (`3.66s + 0.512s × pairs`) to argue the intercept was mostly amortizable and the ceiling only
+   ~1.5×. The real intercept is 5.076s, close to the original 36-target estimate of 4.91s. That
+   three-target fit was thin and this document said so; it was still wrong to revise the headline
+   number on it. The slope was the part the smoke test got wrong: 0.5923s against 0.459s, 29 % low.
 2. **Memory.** A 194-gene batch is 194 × 586,309 dense doubles ≈ 0.9 GB for the count matrix and as
    much again for the effect-size matrix, against ~54 MB per target today. The 8 GB request may
    hold but has not been tested.
@@ -840,10 +846,12 @@ negative claims are essentially never assertable at 100 replicates and a 15 % kn
 - **Is the 5 % effect size worth 100 replicates?** Nearly every pair is underpowered there, so the
   replicates buy a precise estimate of a number that is 0. Sweeping 5 % at 30 reps and spending
   the difference on 20–25 % would carry more information. Untested.
-- **`--target-overhead` in `split_pairs.R`** defaults to 0, balancing purely on pairs. It should
-  now be set from the measured cost model: the per-target term is 4.91s against 0.459s per pair, so
-  `--target-overhead` ≈ 10.7 pair-equivalents. Splits are currently balanced on pairs alone, which
-  is why per-task times still vary with how many targets a split happens to collect.
+- **`--target-overhead` in `split_pairs.R`** defaults to 0, balancing purely on pairs. The array now
+  fixes the right value: 5.076s per target against 0.5923s per pair, so **`--target-overhead` ≈ 8.6
+  pair-equivalents** (not the 10.7 an earlier estimate gave). Splits are currently balanced on pairs
+  alone, which is why per-task wall clock still spread from 35 to 110 minutes around a 57-minute
+  median — a split holding 4 targets pays four intercepts. Worth setting before the next sweep, since
+  the tail task determines when the whole array finishes.
 - **ODM / out-of-core support** is designed for but not implemented. The seam is
   `get_response_matrix()` in `bin/lib/sceptre_io.R`, which currently errors explicitly on an `odm`.
   The hard part is that poscounts size factors need a per-cell median over genes — a column-wise
