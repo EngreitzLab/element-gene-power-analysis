@@ -74,10 +74,11 @@ require_file "${PREPARED_DIR}/sceptre_template.rds" "sceptre_template.rds from s
 require_file "${PREPARED_DIR}/grna_targets.tsv"     "grna_targets.tsv from step 01"
 require_dir_nonempty "${SPLITS_DIR}"                "splits directory from step 02"
 
-# The per-replicate null models. Without these, sceptre either refits inside every call (4.3x) or --
-# if the template still carries the inherited real-data cache -- silently tests simulated counts
-# against real-data coefficients, which understates power. run_power_simulation.R refuses the latter.
-NULL_MODELS="${PREPARED_DIR}/null_precomputations.rds"
+# The per-replicate null models (NULL_MODELS comes from config.sh -- do not redefine it here, or it
+# will drift from the path step 02c writes). Without these, sceptre either refits inside every call
+# (4.3x) or -- if the template still carries the inherited real-data cache -- silently tests
+# simulated counts against real-data coefficients, which understates power. run_power_simulation.R
+# refuses the latter.
 require_file "${NULL_MODELS}" "null_precomputations.rds from step 02b"
 
 n_available=$(find "${SPLITS_DIR}" -name 'split_*.tsv' | wc -l)
@@ -100,25 +101,50 @@ echo "pairs:       ${n_pairs}"
 out_dir="${SIM_DIR}/es${ES}"
 mkdir -p "${out_dir}"
 out="${out_dir}/${SPLIT_NAME}.tsv"
+provenance="${out}.provenance"
+
+# What this output was produced from. Row count cannot distinguish two runs that differ only in
+# their null model -- see the long note in config.sh -- so the resume check below requires this
+# string to match as well, not just the line count.
+NULL_MODELS_MD5=$(md5sum "${NULL_MODELS}" | cut -d' ' -f1)
+want_provenance="config=${NULL_MODEL_CONFIG} null_models_md5=${NULL_MODELS_MD5} reps=${NUM_REPLICATES} seed=${SEED} guide_sd=${GUIDE_SD} es=${ES}"
 
 # Resume support. A task that already produced a complete output is skipped, so the array can be
 # resubmitted wholesale after a partial failure without redoing finished work.
 #
-# "Complete" is judged by row count: reps x pairs data rows plus a header. A task killed mid-write
-# -- or preempted on `owners` -- leaves a short file, which is caught here rather than silently
-# under-counting replicates in compute_power.R.
+# "Complete" means both:
+#   * the right row count -- reps x pairs data rows plus a header. A task killed mid-write, or
+#     preempted on `owners`, leaves a short file, which is caught here rather than silently
+#     under-counting replicates in compute_power.R.
+#   * matching provenance. An output produced under a different null-model configuration, a
+#     different null-model bundle, or different seed/reps is NOT resumable, and re-running it is
+#     the whole point of the resubmission. A missing sidecar means the file predates this check,
+#     so it cannot be vouched for and is redone.
 if [[ -s "${out}" ]]; then
   expected=$(( NUM_REPLICATES * n_pairs + 1 ))
   actual=$(wc -l < "${out}")
-  if [[ "${actual}" -eq "${expected}" ]]; then
+  have_provenance=""
+  [[ -s "${provenance}" ]] && have_provenance=$(cat "${provenance}")
+
+  if [[ "${actual}" -eq "${expected}" && "${have_provenance}" == "${want_provenance}" ]]; then
     echo
-    echo ">>> already complete (${actual} lines), skipping"
+    echo ">>> already complete (${actual} lines, provenance matches), skipping"
     report_usage
     exit 0
   fi
+
   echo
-  echo ">>> existing output is incomplete (${actual} of ${expected} lines), redoing"
-  rm -f "${out}"
+  if [[ "${actual}" -ne "${expected}" ]]; then
+    echo ">>> existing output is incomplete (${actual} of ${expected} lines), redoing"
+  elif [[ -z "${have_provenance}" ]]; then
+    echo ">>> existing output has no provenance sidecar, redoing"
+    echo "      want: ${want_provenance}"
+  else
+    echo ">>> existing output was produced differently, redoing"
+    echo "      have: ${have_provenance}"
+    echo "      want: ${want_provenance}"
+  fi
+  rm -f "${out}" "${provenance}"
 fi
 
 echo
@@ -138,5 +164,10 @@ pixi_run Rscript bin/run_power_simulation.R \
 
 require_file "${out}" "simulation output"
 echo "    wrote $(($(wc -l < "${out}") - 1)) rows"
+
+# Written only after the output is confirmed present, so an interrupted task never leaves a
+# sidecar vouching for a file that does not exist or is short.
+printf '%s' "${want_provenance}" > "${provenance}"
+echo "    provenance: ${want_provenance}"
 
 report_usage

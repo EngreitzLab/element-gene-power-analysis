@@ -27,16 +27,45 @@ OUTDIR="${REPO_ROOT}/results/refactor"
 PREPARED_DIR="${OUTDIR}/prepared"
 SPLITS_DIR="${OUTDIR}/splits"
 SMOKE_DIR="${OUTDIR}/smoke"
-SIM_DIR="${OUTDIR}/sim"
-POWER_DIR="${OUTDIR}/power"
 COMPARISON_DIR="${OUTDIR}/comparison"
 
+## WHICH NULL MODEL THE SIMULATION TESTS AGAINST =================================================
+#
+# This is part of the output path, and that is load-bearing rather than tidy-mindedness.
+#
+# The null-model configuration does not change the *shape* of a task's output -- the same
+# reps x pairs rows come out under every configuration -- so nothing about a finished file
+# distinguishes one from another. Step 04's resume check compares row counts, and on 2026-08-13 it
+# therefore skipped all 1,000 tasks of the null_fit rerun (job 38882207) because the as_is output
+# from job 38849611 was sitting at the same paths with exactly the right number of rows. The array
+# reported 1,000 successes and recomputed nothing.
+#
+# Putting the configuration in the directory name makes that collision impossible: two
+# configurations can no longer address the same file. The `provenance` sidecar written next to each
+# output in step 04 is the second layer, and catches the case a directory name cannot -- the same
+# configuration re-run against a *different* null-model bundle.
+#
+#   as_is     inherited real-data cache. Biased low by ~0.03; only for reproducing job 38849611.
+#   null_fit  per-replicate null models from step 02b. The correct configuration; production default.
+#   cleared   refits inside every call. The faithful reference, 4.3x the cost. Never for production.
+#
+# See docs/status.md, "Settled -- which per-gene null model does the simulation test against?".
+NULL_MODEL_CONFIG="null_fit"
+
+SIM_DIR="${OUTDIR}/sim_${NULL_MODEL_CONFIG}"
+POWER_DIR="${OUTDIR}/power_${NULL_MODEL_CONFIG}"
+
+# The as_is baseline from job 38849611, kept deliberately: it is the only direct measurement of how
+# much the inherited cache moved real numbers at 100 replicates. Step 09 compares against it, so it
+# is named explicitly rather than reached through SIM_DIR, which now follows NULL_MODEL_CONFIG.
+AS_IS_SIM_DIR="${OUTDIR}/sim_as_is"
+
 # Per-replicate null models (step 02b), and the null_fit validation subset (steps 08-09). The
-# subset writes to its own tree so it can never be mistaken for, or concatenated with, the
-# as_is output in SIM_DIR.
+# subset writes to its own tree so it can never be mistaken for, or concatenated with, either the
+# as_is baseline or the full null_fit run.
 NULL_MODELS_DIR="${OUTDIR}/null_models"
 NULL_MODELS="${PREPARED_DIR}/null_precomputations.rds"
-NULL_FIT_SIM_DIR="${OUTDIR}/sim_null_fit"
+NULL_FIT_SUBSET_DIR="${OUTDIR}/sim_null_fit_subset"
 
 LOG_DIR="${REPO_ROOT}/logs/refactor"
 

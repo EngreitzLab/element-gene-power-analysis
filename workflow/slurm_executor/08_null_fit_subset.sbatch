@@ -56,7 +56,7 @@ require_file "${PREPARED_DIR}/grna_targets.tsv"     "grna_targets.tsv from step 
 require_file "${NULL_MODELS}"                       "null_precomputations.rds from step 02c"
 require_file "${SPLIT}"                             "split file"
 
-out_dir="${NULL_FIT_SIM_DIR}/es${ES}"
+out_dir="${NULL_FIT_SUBSET_DIR}/es${ES}"
 mkdir -p "${out_dir}"
 out="${out_dir}/$(basename "${SPLIT}")"
 

@@ -10,15 +10,22 @@ State of the refactor, written so the work can be picked up by someone else.
 **Short version:** the five pipeline steps are complete, run standalone, and have now run on
 Sherlock as well as on a laptop. `workflow/slurm_executor/` holds one plain `sbatch` script per step
 — deliberately no orchestration layer, so a failure is attributable to the step rather than the
-runner — and steps 0–3 (environment, prepare, split, smoke test) are validated there. The full
-simulation array at effect size 0.15 went out on 2026-08-13 as job `38849611`, 1,000 tasks at 100
-replicates.
+runner. The full simulation array at effect size 0.15 ran on 2026-08-13 as job `38849611`, 1,000
+tasks at 100 replicates, 999 of them completing; it is the source of every measured number below.
+
+Since then, and **not yet reflected in the older sections of this document**, three things landed:
+`null_fit` is implemented (Step 6a, below), the sceptre pin moved to **0.99.0**, and sceptre now
+carries a **local patch** that reuses the gRNA precomputation across replicates. All three are in
+flight as of 2026-08-13 afternoon: the null-model array `38879935` is running, its merge `38879939`
+and the `null_fit` rerun of the simulation `38882207` are queued behind it.
 
 Still missing: Nextflow (Step 7), a test suite (Step 8), and the old-vs-new comparison, which is
-scripted in `workflow/compare_old_new.R` but cannot run until the array lands. The comparison is now
+scripted in `workflow/compare_old_new.R`. The comparison is now
 straightforward because the reference sample `day0_grna20_no_shuffle` was produced by the old
 pipeline with the size-factor shuffle already removed, so only the RNG stream differs between the two
-implementations — see the note in `bin/lib/simulate.R`.
+implementations — see the note in `bin/lib/simulate.R`. Two equivalence checks have since removed the
+other confounders: the version bump and the gRNA patch each provably change no number (Steps 10 and
+11, below).
 
 ---
 
@@ -73,7 +80,9 @@ Shared code lives in `bin/lib/` (`cli.R`, `sim_input.R`, `pert_input.R`, `simula
 ### Infrastructure
 
 - `pixi.toml` / `pixi.lock` — three environments (runtime / build / dev), sceptre pinned to
-  `v0.10.3` (`9faa4373`), guarded by `pixi run check-api`
+  **0.99.0** (`3ba046b8`, an *untagged* `main` commit — v0.10.3 is still the newest tag, so
+  `SCEPTRE_REF` names a DESCRIPTION version, not a tag) **plus a local patch**, both guarded by
+  `pixi run check-api`. See the sceptre section below
 - `.githooks/pre-commit` — auto-fixes line endings, tabs (2 spaces for R/YAML, 4 otherwise),
   trailing whitespace, final newline; rejects files >512 KB, non-snake_case filenames, camelCase R
   identifiers. `pixi run lint` is the read-only repo-wide version
@@ -223,7 +232,7 @@ conditional-resampling test is far more robust to the null model than the null m
 - **The effect size 0.15 array (`38849611`) ran `as_is`**, so its power values are biased low by
   roughly 0.03. That is *conservative* for the false-negative triage question — it under-certifies
   negatives rather than over-certifying them — so nothing built on it is unsafe, only pessimistic.
-  It should still be rerun under `null_fit` before publication.
+  The `null_fit` rerun is queued as `38882207`; keep the `as_is` output for comparison.
 - The pre-refactor pipeline inherited the same cache, so the **old-vs-new comparison is unaffected**:
   both sides share the bias. Compare them `as_is` against `as_is`.
 - Clearing the slot without supplying null fits gives `cleared`, at 4.3×. The two changes must land
@@ -240,45 +249,200 @@ superseded by `cache_experiment.R` and should not be used.
 
 ---
 
-## Left to do
+## Step 6a — `null_fit`: implemented, running
 
-### Step 6a — adopt `null_fit` (do this before spending on another effect size)
-
-Settled by the section above and cheap, but it is not the one-line change the earlier draft claimed,
-because the null fit has to be **shared across array tasks**. A gene's null model is
-target-independent, so one fit per (gene, replicate) serves every target — but targets are spread over
-1,000 splits, so fitting inside each task would pay for it 1,000 times instead of once.
-
+Not a one-line change, because the null fit has to be **shared across array tasks**. A gene's null
+model is target-independent, so one fit per (gene, replicate) serves every target — but targets are
+spread over 1,000 splits, so fitting inside each task would pay for it 1,000 times instead of once.
 It is also **effect-size independent**: a null simulation has no knockdown, so one set of fits serves
 the whole sweep. 100 replicates, not 100 × 6.
 
-Shape of the change:
+What shipped:
 
-1. **New `bin/fit_null_models.R`** — for each replicate, simulate a null matrix (no knockdown) and run
+1. **`bin/fit_null_models.R`** — for each replicate, simulates a null matrix (no knockdown) and runs
    one `run_discovery_analysis()` with `@response_precomputations` empty, keeping only the resulting
    slot. An entry is 11 named coefficients plus a `theta` scalar, so 100 replicates × 272 genes is a
-   few hundred KB, not a memory problem. Seed from `(seed, rep)` only — deliberately *not*
-   `(seed, target, rep, effect_size)`, since the point is that it does not depend on target or effect
-   size. Cost is ~25 CPU-h for 100 replicates, consistent with the +22 CPU-h the `null_fit_amortized`
-   model implies.
-2. **`run_power_simulation.R` gains `--null-precomputations`** and, inside the replicate loop, assigns
-   that replicate's entry to `obj@response_precomputations` before the call — the same one-line
-   injection `cache_experiment.R:106` does.
-3. **`prepare_sim_input.R` clears the inherited slot** on the template, *after*
-   `build_dispersion_vector` has read it (`line 259`) — dispersions must keep coming from the real
-   data, since they set the noise the simulation is meant to reproduce. Only the null model moves.
-   Clearing is what makes an accidental `as_is` impossible to reintroduce.
-4. **New `workflow/slurm_executor/` step** between 02 and 04, and a `--null-precomputations` argument
-   threaded through `04_run_power_simulation.sbatch`.
+   few hundred KB. Seeded from `(seed, rep)` only — deliberately *not*
+   `(seed, target, rep, effect_size)`, since the point is that it depends on neither target nor
+   effect size.
+2. **`run_power_simulation.R --null-precomputations`** assigns that replicate's entry to
+   `@response_precomputations` inside the replicate loop (`line 317`), and validates that the bundle's
+   seed and replicate range match the run's.
+3. **The inherited slot is cleared in `slim_sceptre_object()`** (`bin/lib/sceptre_io.R:199`), *after*
+   `build_dispersion_vector` has read it (`prepare_sim_input.R:259`) — dispersions must keep coming
+   from the real data, since they set the noise the simulation is meant to reproduce. Only the null
+   model moves. Clearing is what makes an accidental `as_is` impossible to reintroduce.
+4. **Steps `02b` (array, one task per replicate), `02b_submit.sh` and `02c` (merge)** in
+   `workflow/slurm_executor/`, with `--null-precomputations` threaded through
+   `04_run_power_simulation.sbatch`.
 
-Guard against the failure mode this whole investigation was about: `run_power_simulation.R` should
-**error if the template arrives with a non-empty `@response_precomputations` and no
-`--null-precomputations` is given**, rather than silently running `as_is`. That is the bug that went
-unnoticed for the entire refactor.
+**The guard is in.** `run_power_simulation.R:166` errors if the template arrives with a non-empty
+`@response_precomputations` and no `--null-precomputations` — rather than silently running `as_is`.
+That is the bug that went unnoticed for the entire refactor, and it can no longer recur silently.
 
-Then rerun effect size 0.15. Keep the `as_is` output rather than deleting it — it is the only direct
-measurement of how much the bias moved real numbers at 100 replicates, and the threshold check that
-found the bias used 5.
+**In flight as of 2026-08-13.** The null models are built (`38879935`, merged by `38879939` into
+`prepared/null_precomputations.rds`). The `null_fit` rerun of effect size 0.15 is **`38887744`** —
+the first attempt, `38882207`, silently skipped all 1,000 tasks and was cancelled; see the resume-check
+entry under Gotchas. `02b_submit.sh` had never run successfully before commit `08b0d04`: `PASSTHROUGH[@]: unbound
+variable` under `set -u`, the bash 4.2 empty-array bug already fixed in `04_submit.sh` but never
+back-ported. That is why `null_models/` was empty.
+
+Keep the `as_is` output rather than deleting it — it is the only direct measurement of how much the
+bias moved real numbers at 100 replicates, and the threshold check that found the bias used 5.
+
+---
+
+## sceptre: pinned to 0.99.0, and patched
+
+Two changes to the dependency, both verified not to move any number.
+
+### The version bump
+
+The pin moved from `v0.10.3` (`9faa4373`) to **0.99.0** (`3ba046b8`, 2026-08-07). There is no
+`v0.99.0` tag — v0.10.3 is still the newest tag — so `SCEPTRE_REF` names an untagged commit's
+DESCRIPTION version. The slot set is byte-for-byte the same 55 slots (reformatted only), so
+`sceptre_object.rds` and `sceptre_template.rds` serialised under 0.10.3 still deserialize, and
+0.99.0's NEWS is Bioconductor prep with no statistical change.
+
+Two things the bump forced, both easy to miss:
+
+- **`cat()` became `message()`.** `capture.output()` only catches stdout, so the "consider
+  `parallel = TRUE`" note would have leaked ~279,800 lines per effect size. `suppressMessages()` now
+  wraps the `run_discovery_analysis()` calls in `run_power_simulation.R` and `fit_null_models.R`;
+  both wrappers are kept so the pin can move either way.
+- **New Imports `parallelly` and `withr`**, both on our code path. `R CMD INSTALL` enforces Imports,
+  so they had to enter `pixi.toml`, forcing a `pixi.lock` re-solve — which must run **inside the
+  ubuntu container**, since the host is CentOS 7 (glibc 2.17) and pixi solves against the host's
+  virtual `__glibc`. That is `00b_relock_env.sbatch` (job `38877284`); the only package added was
+  `r-parallelly 1.48.0`. **Commit `pixi.toml` and `pixi.lock` together.**
+
+Verified not to be a problem: the one RNG change on the association path
+(`set.seed(4)` → `withr::with_seed(4, ...)` in `partition_response_ids()`) sits inside
+`if (parallel)`, and the pipeline always calls `parallel = FALSE`.
+
+### The patch — reusing the gRNA precomputation
+
+sceptre's CRT path regresses perturbation status on the covariates and draws synthetic treatment
+assignments from the fitted probabilities. That fit depends on the gRNA-to-cell assignments and the
+covariate matrix — **never on the response counts**. The simulation calls `run_discovery_analysis()`
+once per (target, replicate) with only `@response_matrix` changing, so every replicate after the
+first refit an identical model.
+
+Unlike `@response_precomputations` there is no slot to hand it back through: `fitted_probabilities`
+is a local variable inside the two CRT workhorses. So this ships as
+`patches/0001-reuse-grna-precomputation.patch`, adding an optional argument with a `NULL` default —
+unpatched behaviour is unchanged. Reuse is **on** by default; `--no-grna-precomp-reuse` turns it off.
+
+Three design points are load-bearing — do not "simplify" them away:
+
+- **The cache holds coefficients, not fitted values.** Fitted values are one double per cell, which
+  at this scale is ~2.3 GB held in the caller's session. Reconstruction via
+  `binomial()$linkinv(drop(X %*% coefs))` is bit-identical — `glm.fit` computes the `fitted.values`
+  it returns exactly that way, and the offset is zero here. Verified: `identical()` TRUE, max abs
+  diff 0.
+- **Each entry records `n_cells`, and the guard checks it.** The two workhorses fit on different cell
+  sets but the same covariates, so the coefficient vector is the same length in both — length alone
+  cannot tell a cache built for one path from a cache built for the other.
+- **Never cache `crt_index_sampler_fast()`'s output.** The fitted probabilities are deterministic;
+  the synthetic index sets drawn from them must be redrawn every call. Caching the indices would
+  freeze the resampling distribution across replicates and destroy the CRT null — producing a power
+  estimate that is garbage but looks plausible.
+
+A target that is rank deficient *within its own cells* is omitted from the cache with a warning:
+`glm.fit` returns `NA` for an aliased coefficient while keeping `fitted.values` valid, so a naive
+`X %*% coefs` would yield all-`NA`.
+
+Supporting machinery: `bin/lib/apply_patch.R` is a pure-R unified-diff applier, needed because the
+cluster runs everything in a stock `ubuntu:22.04` container that has neither `patch` nor `git`. It is
+stricter than `patch(1)` — no fuzz, no offset search, exact context match — so a moved pin fails
+loudly. `bin/install_sceptre.R` stamps `RemoteSha` and a `LocalPatches` md5 into DESCRIPTION and
+short-circuits only when **both** match; `bin/check_sceptre_api.R` asserts the patched API
+separately, because an unapplied patch would otherwise surface only at the first
+`run_discovery_analysis()` call, long after steps 01 and 02.
+
+### Equivalence check `10_grna_precomp_equivalence` — does the patch change results? No. And the saving is small.
+
+Job `38879261`: outputs **byte-identical** between reuse and refit. That was the point of the job and
+it is confirmed.
+
+The cost result is weak, and much weaker than the retracted reasoning implied:
+
+```
+refit every replicate   620s   (124.0s per call)
+reuse per target        608s   (121.6s per call)
+speedup                 1.02x  (-1.9% wall clock)
+```
+
+`split_0001` is 1 target with 36 pairs, so 5 replicates = 5 calls and reuse removes 4 of 5 gRNA fits:
+12s / 4 ⇒ ~3s per gRNA fit. Two caveats pointing opposite ways: 1.9 % on 620s is **within plausible
+node-to-node variation**, so 3s is an upper bound from a noisy difference, not a measurement — and
+this is the **least favourable target in the dataset**, since 36 pairs is the maximum against a
+median of 9, and the run was in the `cleared` configuration, which inflates the per-pair term ~5.75×.
+Against the `null_fit` model a fixed ~3s is ~8 % at 36 pairs but ~22 % at the median 9.
+
+**The "up to 2.4×" claim stays retracted and is not replaced.** A better number needs the `null_fit`
+configuration, so re-run `10_grna_precomp_equivalence` once the bundle exists.
+
+### Equivalence check `11_sceptre_version_equivalence` — does the version bump change results? No.
+
+Job `38879265`: stock v0.10.3 against patched 0.99.0, reuse off both sides, **identical** — the bump
+does not change any number, so the old-vs-new comparison (Comparison 1 below,
+`07_compare_old_new.sbatch`) is not confounded by it.
+
+Both checks are exactly paired: seeds derive from `(seed, target, rep, effect_size)`, which involves
+neither the cache nor the sceptre version, so the simulated counts are bit-identical across each pair
+and any difference would be attributable. Between them they isolate the two confounders the
+old-vs-new comparison would otherwise carry.
+
+### Gotchas found along the way
+
+Recorded because each cost real time and none is discoverable from the code.
+
+- **`vendor/sceptre.tar.gz` is a snapshot of `main`, not the pin**, and is untracked (`vendor/` is
+  gitignored). Do not use it as an install source.
+- **The login node caps open file descriptors at 256, hard**, and `pixi lock` exhausts it mid-solve
+  (`No file descriptors available (os error 24)`). The solve must run in a job — hence
+  `00b_relock_env.sbatch`. More generally, nothing heavy belongs on the login node.
+- **pixi cannot install R packages from GitHub at all** — conda channels only, and its git support is
+  PyPI-only. Hence the separate `pixi run setup` task plus a SHA pin.
+- **`.githooks/pre-commit` strips trailing whitespace from source extensions**, which would corrupt a
+  `.patch` file's blank context lines. `.patch` is not in its `is_source_file` list, so it is safe
+  today — and `apply_patch.R` also treats a zero-length line as blank context. Do not add `.patch`
+  to that list.
+- **A patch's context only guards the lines it touches.** The API assertions in
+  `check_sceptre_api.R` are the layer that actually catches a silently-unapplied patch.
+- **`02c`'s dependency is `afterok:38879935,afterany:<step 10>:<step 11>`**, and the `afterany` is
+  deliberate: `02c` writes `prepared/null_precomputations.rds`, and the two equivalence checks test
+  for that file at runtime, so an unguarded merge would silently flip them from `cleared` to
+  `null_fit` depending on scheduling.
+- **Step `04`'s resume check skipped all 1,000 tasks of the `null_fit` rerun.** Job `38882207`
+  reported 1,000 successes in ~15 s each and recomputed nothing: `out` was
+  `${SIM_DIR}/es${ES}/${SPLIT_NAME}.tsv` with no reference to the null-model configuration, and
+  "complete" was judged by row count — which is identical under every configuration, since the null
+  model does not change how many rows come out. So the `as_is` output from `38849611` satisfied the
+  check. The R-level guard at `run_power_simulation.R:166` cannot catch this, because R never
+  starts. Worse, the skip is the only thing that *prevented* a second bug: step 04 now passes
+  `--null-precomputations` unconditionally, so had it run it would have overwritten the `as_is`
+  baseline in place — the same directory `09_compare_null_fit.sbatch` requires as the `as_is` side.
+
+  Fixed two ways. `NULL_MODEL_CONFIG` is now part of the output path
+  (`SIM_DIR=${OUTDIR}/sim_${NULL_MODEL_CONFIG}`, `POWER_DIR` likewise), so two configurations can no
+  longer address the same file; the `as_is` baseline moved to `results/refactor/sim_as_is/` and is
+  named explicitly by `AS_IS_SIM_DIR`. And each output now carries a `.provenance` sidecar recording
+  the configuration, the null-bundle md5, reps, seed, guide-sd and effect size — the resume check
+  requires it to match, so an output produced differently is redone rather than trusted. A missing
+  sidecar means the file predates the check and cannot be vouched for, so it is also redone.
+  Resubmitted as `38887744`.
+- **Step `03`'s replicate-count check compared against stale output.** It failed with "971 rows, 376
+  pairs, 109 with != 2 reps" while the three files the run actually wrote were each exactly 36 pairs
+  × 2 reps. The directory held output from an earlier 280-split run, and because `split_pairs.R` pads
+  the index to the width of `--n-splits`, those files are named `smoke_split_001_*` against
+  `smoke_split_0001_*` — the check's glob could not tell them apart. Fixed in `628d5c9`: step 03 now
+  records the outputs it writes and checks only those.
+
+---
+
+## Left to do
 
 ### Step 7 — Nextflow + SLURM profile
 
@@ -602,6 +766,66 @@ Prior art to check before writing any of this up: **scPower** (Schmid et al.) is
 will name, and the claim that no satisfying method exists needs an actual literature search rather
 than an assumption.
 
+### Step 12 — upstream the gRNA precomputation patch to Katsevich-Lab/sceptre
+
+**Planned, not implemented.** Nothing exists upstream or in any fork; the local patch described
+above is the starting point for the diff, not the diff itself. The case for upstreaming is that any
+caller running many analyses over the same cells and gRNA assignments — a power simulation, a
+sensitivity sweep, a bootstrap, PerturbPlan-style work — refits an identical model every call, and
+sceptre already solves exactly this for the *response* precomputation via `@response_precomputations`.
+
+Branch from `upstream/main`, not from the fork's `main`, which is ~92 commits behind and carries
+unrelated commits — a diff against it would not apply.
+
+**API: an argument plus an exported constructor**, not an S4 slot.
+
+```r
+run_discovery_analysis(sceptre_object, ..., grna_precomputations = NULL)
+run_power_check(sceptre_object, ..., grna_precomputations = NULL)
+compute_grna_precomputations(sceptre_object, analysis = "discovery_analysis")   # new export
+```
+
+A `@grna_precomputations` slot symmetric with `@response_precomputations` is the obvious
+alternative, and the PR body should offer it — but a class change is badly timed against a
+Bioconductor submission, and it would invalidate objects serialised under the old class definition.
+
+**Scope is discovery and power checks, not the calibration check.** The calibration check's gRNA
+group keys are synthetic undercover-NT group names regenerated on every call, so hits would
+essentially never occur and the key space would collide confusingly with the real-target one.
+Discovery and power checks share both the real target key space and the row space, so one cache
+serves both — which is the simulation use case.
+
+Beyond the three load-bearing constraints listed in the patch section above, two more apply upstream:
+
+- **Row-space guard.** The two workhorses subset the covariate matrix differently
+  (`crt_glm_factored_out` uses the globally-subset matrix; `discovery_ntcells_crt` uses
+  `c(trt_idxs, all_nt_idxs)` per group), so a cache built for one path is silently wrong in the
+  other. Validate on hit and **error loudly** — the user supplied it, so a mismatch is a user error
+  worth surfacing rather than silently refitting.
+- **Staleness.** A user-supplied cache has no reset hook: changing the formula via
+  `set_analysis_parameters()`, re-running `assign_grnas()`, or changing QC all invalidate it while
+  dimensions may stay the same. Defend proportionately — validation in the constructor, a clear
+  `@details` warning, the dimension guard. Do not build a fingerprinting scheme.
+
+`run_perm_test_in_memory()` also needs the formal, or conditional injection: both core functions are
+invoked through one shared `do.call(args_to_pass)`. The local patch chose conditional injection on
+the CRT branch, mirroring `synthetic_idxs` on the permutation branch, so no ignored formal is needed.
+
+Four tests, of which the third is the one that matters: equivalence (same seed, cache vs `NULL`,
+identical p-values, both workhorses); the wrong-row-space guard errors; **two calls sharing one cache
+still draw different synthetic indices** — the anti-regression that would catch the dangerous version
+of this optimisation; and a rank-deficient covariate matrix must not produce `NA` p-values.
+
+`devtools::check()` must be clean — upstream is mid-Bioconductor-submission and will not take a PR
+that adds NOTEs. Match the Air formatter (4-space indent, 80-char width, one argument per line; see
+its `air.toml`).
+
+**Do not quote a speedup in the PR.** The measured saving is 1.02× on the least favourable target
+and is not distinguishable from node noise; describe the mechanism and the use case, and follow up
+with a number measured at scale. There is prior history of over-claiming here — see the retraction
+in the null-model section. Opening an issue first, letting the maintainers pick the argument or the
+slot, is reasonable; we are already collaborators via PerturbPlan, so it need not be cold.
+
 ---
 
 ## Running the comparisons on the cluster
@@ -640,6 +864,12 @@ Rscript bin/run_power_simulation.R \
 ### Full run as a SLURM array
 
 `prepare_sim_input.R` once, then one array task per (split, effect size).
+
+**These snippets are illustrative and predate `workflow/slurm_executor/`, which is what actually
+runs — prefer it.** In particular they omit `--null-precomputations`, so as written they would run
+the `cleared` configuration at ~4.3× the cost: the template's inherited slot is now emptied by
+`slim_sceptre_object()`, so sceptre refits every gene's null model inside every call. Add steps `02b`
+and `02c` and pass the bundle.
 
 ```sh
 #!/usr/bin/env bash
@@ -846,12 +1076,34 @@ negative claims are essentially never assertable at 100 replicates and a 15 % kn
 - **Is the 5 % effect size worth 100 replicates?** Nearly every pair is underpowered there, so the
   replicates buy a precise estimate of a number that is 0. Sweeping 5 % at 30 reps and spending
   the difference on 20–25 % would carry more information. Untested.
-- **`--target-overhead` in `split_pairs.R`** defaults to 0, balancing purely on pairs. The array now
-  fixes the right value: 5.076s per target against 0.5923s per pair, so **`--target-overhead` ≈ 8.6
-  pair-equivalents** (not the 10.7 an earlier estimate gave). Splits are currently balanced on pairs
-  alone, which is why per-task wall clock still spread from 35 to 110 minutes around a 57-minute
-  median — a split holding 4 targets pays four intercepts. Worth setting before the next sweep, since
-  the tail task determines when the whole array finishes.
+- **`--target-overhead` in `split_pairs.R`: closed, and the answer is "leave it".** It defaults to 0,
+  so every split ever produced — including the ones the `null_fit` rerun (`38882207`) will use — is
+  balanced on pair count alone. The array does fix the right value (5.076s per target against
+  0.5923s per pair ⇒ **≈ 8.6 pair-equivalents**), but setting it buys almost nothing at
+  `N_SPLITS=1000`, and the reason this document previously gave for setting it was wrong.
+
+  Measured on the real splits, and on job `38849611`'s own `sacct` record:
+
+  | | Predicted tail task | Predicted floor | max/mean |
+  |---|---:|---:|---:|
+  | `--target-overhead 0` (what ran) | 68.4 min | 43.0 min | 1.139× |
+  | `--target-overhead 8.6` | **67.4 min** | 58.0 min | 1.123× |
+
+  Simulating the same LPT bin packing `split_pairs.R` uses reproduces the on-disk splits exactly at
+  overhead 0, so the comparison is like for like. The overhead raises the *floor* a lot (43 → 58 min)
+  and moves the *tail* by **one minute** — and the tail is what determines when the array finishes.
+  At 1,000 splits each task holds only **1–4 targets**, so there is little imbalance left to
+  reclaim.
+
+  **This refutes the previous revision of this point**, which blamed the observed 35–110 minute
+  spread on pair-only balancing. It is not that: the cost model predicts a 43–68 minute range, and
+  regressing actual task time on predicted gives **r = 0.373, r² = 0.139** — split composition
+  explains 14 % of the variance. The model is unbiased on the mean (36.02s predicted against 35.97s
+  actual per replicate), so it is not simply wrong. What explains the spread is **node
+  heterogeneity**: across the 229 nodes the array landed on, the slowest node's mean is **2.73×** the
+  fastest (55.8s against 20.5s per replicate). There was no preemption to blame (999 COMPLETED,
+  1 FAILED). Set `--target-overhead 8.6` if `N_SPLITS` ever drops far enough that splits hold ten or
+  more targets; do not re-split an array for it.
 - **ODM / out-of-core support** is designed for but not implemented. The seam is
   `get_response_matrix()` in `bin/lib/sceptre_io.R`, which currently errors explicitly on an `odm`.
   The hard part is that poscounts size factors need a per-cell median over genes — a column-wise

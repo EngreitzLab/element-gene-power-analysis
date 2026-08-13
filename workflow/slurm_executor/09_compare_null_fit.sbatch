@@ -30,18 +30,23 @@ log_header "Step 9: null_fit vs as_is at effect size ${ES}"
 
 load_pixi
 require_file "${PREPARED_DIR}/discovery_threshold.txt" "discovery_threshold.txt from step 01"
-require_dir_nonempty "${NULL_FIT_SIM_DIR}/es${ES}"     "null_fit subset from step 08"
-require_dir_nonempty "${SIM_DIR}/es${ES}"              "as_is simulation output from step 04"
+require_dir_nonempty "${NULL_FIT_SUBSET_DIR}/es${ES}"     "null_fit subset from step 08"
+require_dir_nonempty "${AS_IS_SIM_DIR}/es${ES}"        "as_is baseline from job 38849611"
 
 mkdir -p "${COMPARISON_DIR}"
 
-# Compare only the splits the null_fit subset covers: step 04 has all 1,000 and step 08 has ~20, and
-# feeding the full as_is set in would merge on pairs that have no null_fit counterpart. Restricting
-# the as_is side to the same basenames keeps the merge honest.
+# Compare only the splits the null_fit subset covers: the as_is baseline has all 1,000 and step 08
+# has ~20, and feeding the full as_is set in would merge on pairs that have no null_fit counterpart.
+# Restricting the as_is side to the same basenames keeps the merge honest.
+#
+# Note this step predates step 04 itself running under null_fit. Once the full null_fit array has
+# landed, ${SIM_DIR} holds a null_fit counterpart for all 1,000 splits and the 20-split subset is
+# redundant -- comparing ${AS_IS_SIM_DIR} against ${SIM_DIR} directly is strictly better. Left as is
+# because the subset is what has been measured so far.
 as_is_files=""
 n_matched=0
-for f in "${NULL_FIT_SIM_DIR}/es${ES}"/split_*.tsv; do
-  counterpart="${SIM_DIR}/es${ES}/$(basename "${f}")"
+for f in "${NULL_FIT_SUBSET_DIR}/es${ES}"/split_*.tsv; do
+  counterpart="${AS_IS_SIM_DIR}/es${ES}/$(basename "${f}")"
   if [[ -s "${counterpart}" ]]; then
     as_is_files="${as_is_files:+${as_is_files},}${counterpart}"
     n_matched=$(( n_matched + 1 ))
@@ -57,8 +62,8 @@ if [[ "${n_matched}" -eq 0 ]]; then
 fi
 
 null_fit_files=""
-for f in "${NULL_FIT_SIM_DIR}/es${ES}"/split_*.tsv; do
-  if [[ -s "${SIM_DIR}/es${ES}/$(basename "${f}")" ]]; then
+for f in "${NULL_FIT_SUBSET_DIR}/es${ES}"/split_*.tsv; do
+  if [[ -s "${AS_IS_SIM_DIR}/es${ES}/$(basename "${f}")" ]]; then
     null_fit_files="${null_fit_files:+${null_fit_files},}${f}"
   fi
 done
