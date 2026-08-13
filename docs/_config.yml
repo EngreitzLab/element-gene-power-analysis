@@ -11,6 +11,10 @@ description: >-
 # which GitHub Pages supports natively.
 remote_theme: just-the-docs/just-the-docs@v0.3.3
 
+# Directory-style page URLs (/usage/ rather than /usage.html). Applies to pages, not just
+# posts, from Jekyll 3 onwards. Internal links use {% link %} so they follow automatically.
+permalink: pretty
+
 color_scheme: light
 search_enabled: true
 heading_anchors: true
