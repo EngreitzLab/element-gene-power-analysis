@@ -543,6 +543,12 @@ should solve on a Linux compute node.
 #    b3cf7ab, not c7448a7: it is the tip of the old `low-mem` branch and includes the
 #    "Improve memory usage in power simulations" commit, so it is the version actually
 #    being run in practice.
+#
+#    Sherlock's default git is 1.8.3.1, which has no `worktree` subcommand -- load a
+#    modern one first. Do NOT `git checkout` the old commit in the working tree instead:
+#    the sbatch scripts run `bin/` from the repository root, so swapping branches under a
+#    running array silently changes the code mid-run.
+ml system git/2.45.1
 git worktree add ../egpa-old b3cf7ab
 cd ../egpa-old
 
