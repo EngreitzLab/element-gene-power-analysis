@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+#
+# Pre-commit checks for element-gene-power-analysis.
+#
+# Auto-fixes (staged files are rewritten and re-staged):
+#   * CRLF and CR line endings -> LF
+#   * tabs -> spaces, at the width conventional for the language (2 for R and YAML, 4 otherwise)
+#   * trailing whitespace removed
+#   * missing final newline added
+#
+# Rejects (cannot be fixed safely without changing meaning):
+#   * any file larger than 512 KB
+#   * filenames that are not snake_case
+#   * camelCase / PascalCase identifiers in R code
+#
+# Install:  pixi run install-hooks     (sets core.hooksPath to .githooks)
+# Lint all: pixi run lint              (same checks across the whole repo, read-only)
+# Fix all:  ./.githooks/pre-commit --all --fix
+
+set -uo pipefail
+
+MAX_BYTES=524288   # 512 KB
+
+# Data files are tab-separated by definition, and Makefiles require tabs, so whitespace
+# normalisation is limited to source files by extension.
+is_source_file() {
+    case "$1" in
+        *.R|*.r|*.nf|*.sh|*.bash|*.py|*.yml|*.yaml|*.toml|*.md|*.config|*.json) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Indent width per language, so expanded tabs match the surrounding code rather than fighting it.
+# R conventionally uses 2 spaces (tidyverse and Google R style both), and YAML uses 2 by convention
+# and forbids tabs outright. Everything else gets 4.
+tab_width_for() {
+    case "$1" in
+        *.R|*.r|*.yml|*.yaml) echo 2 ;;
+        *) echo 4 ;;
+    esac
+}
+
+# Conventional filenames that are not snake_case and should not be.
+is_exempt_filename() {
+    case "$1" in
+        README.md|LICENSE|LICENSE.md|CHANGELOG.md|CONTRIBUTING.md|CITATION.cff|Snakefile|Dockerfile|Makefile) return 0 ;;
+        .*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+red()   { printf '\033[31m%s\033[0m\n' "$*"; }
+green() { printf '\033[32m%s\033[0m\n' "$*"; }
+warn()  { printf '\033[33m%s\033[0m\n' "$*"; }
+
+# In staged mode (the actual hook) files are rewritten and re-staged, which is the point. In --all
+# mode the default is read-only: `pixi run lint` is an audit and should be safe to run anywhere,
+# including CI and a dirty working tree. --fix opts into rewriting.
+mode="staged"
+fix=1
+for arg in "$@"; do
+    case "$arg" in
+        --all) mode="all"; fix=0 ;;
+        --fix) fix=1 ;;
+        *) echo "Unknown argument: $arg" >&2; exit 2 ;;
+    esac
+done
+
+# A temp file rather than an array: macOS ships bash 3.2, which has no mapfile. Reading with a
+# redirection (not a pipe) keeps the loop in the current shell so the counters below survive.
+file_list=$(mktemp)
+trap 'rm -f "$file_list"' EXIT
+
+if [ "$mode" = "all" ]; then
+    git ls-files > "$file_list"
+else
+    git diff --cached --name-only --diff-filter=ACMR > "$file_list"
+fi
+
+failures=0
+fixed_any=0
+
+while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    [ -f "$file" ] || continue
+
+    # --- size ceiling ---------------------------------------------------------------------------
+    size=$(wc -c < "$file" | tr -d ' ')
+    if [ "$size" -gt "$MAX_BYTES" ]; then
+        red "REJECT  $file is $((size / 1024)) KB, over the $((MAX_BYTES / 1024)) KB limit."
+        echo "        Large inputs and outputs belong outside git. If this is pipeline data,"
+        echo "        add it to .gitignore; results/ and *.rds are already ignored."
+        failures=$((failures + 1))
+        continue
+    fi
+
+    # --- filename convention -------------------------------------------------------------------
+    base=$(basename "$file")
+    if ! is_exempt_filename "$base"; then
+        # Check the stem only, not the extension: R files conventionally use a capital `.R`,
+        # so testing the whole basename would reject every correctly-named R script.
+        stem="${base%.*}"
+        # Lowercase letters, digits, underscores and dashes are fine; uppercase is not.
+        if printf '%s' "$stem" | grep -qE '[A-Z]'; then
+            red "REJECT  $file has a non-snake_case filename ('$stem' contains uppercase)."
+            failures=$((failures + 1))
+        fi
+    fi
+
+    # --- whitespace auto-fixes ------------------------------------------------------------------
+    if is_source_file "$file"; then
+        # Normalise into a scratch copy first, so check-only mode can compare without writing.
+        scratch=$(mktemp)
+        cp "$file" "$scratch"
+        TAB_WIDTH=$(tab_width_for "$file") perl -i -pe '
+            my $w = $ENV{TAB_WIDTH};
+            s/\r\n$/\n/;                      # CRLF -> LF
+            s/\r/\n/g;                        # lone CR -> LF
+            1 while s/\t/" " x ($w - (length($`) % $w))/e;   # tabs -> next tab stop
+            s/[ \t]+$//;                      # trailing whitespace
+        ' "$scratch"
+        # Ensure the file ends with exactly one newline.
+        if [ -s "$scratch" ] && [ "$(tail -c 1 "$scratch" | wc -l | tr -d ' ')" -eq 0 ]; then
+            printf '\n' >> "$scratch"
+        fi
+
+        if ! cmp -s "$file" "$scratch"; then
+            if [ "$fix" -eq 1 ]; then
+                cp "$scratch" "$file"
+                green "fixed   $file (line endings / tabs / trailing whitespace)"
+                fixed_any=1
+                if [ "$mode" = "staged" ]; then
+                    git add -- "$file"
+                fi
+            else
+                warn "would fix  $file (line endings / tabs / trailing whitespace)"
+                failures=$((failures + 1))
+            fi
+        fi
+        rm -f "$scratch"
+    fi
+
+    # --- R identifier convention ---------------------------------------------------------------
+    # Flags camelCase and PascalCase assignments. Deliberately does not demand strict snake_case:
+    # SCREAMING_SNAKE constants (PERT_LEVELS) and dotted S3 methods (print.sim_input) are correct
+    # R style and must be allowed.
+    case "$file" in
+        *.R|*.r)
+            hits=$(grep -nE '^[[:space:]]*[A-Za-z][A-Za-z0-9._]*[[:space:]]*<-' "$file" \
+                | grep -vE '^[0-9]+:[[:space:]]*[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*[[:space:]]*<-' \
+                | grep -vE '^[0-9]+:[[:space:]]*[A-Z][A-Z0-9_]+[[:space:]]*<-' \
+                || true)
+            if [ -n "$hits" ]; then
+                red "REJECT  $file has non-snake_case R identifiers:"
+                printf '%s\n' "$hits" | sed 's/^/          /'
+                echo "        Use snake_case for variables and functions, SCREAMING_SNAKE for"
+                echo "        constants, and lower.dotted only for S3 methods."
+                failures=$((failures + 1))
+            fi
+            ;;
+    esac
+done < "$file_list"
+
+if [ "$fixed_any" -eq 1 ] && [ "$mode" = "staged" ]; then
+    warn "Some files were reformatted and re-staged. Review with 'git diff --cached'."
+fi
+
+if [ "$failures" -gt 0 ]; then
+    if [ "$fix" -eq 0 ]; then
+        red "lint: $failures problem(s). Re-run with --fix to apply the whitespace fixes;"
+        red "      filename and identifier problems must be fixed by hand."
+    else
+        red "pre-commit: $failures problem(s) must be fixed by hand."
+    fi
+    exit 1
+fi
+
+exit 0

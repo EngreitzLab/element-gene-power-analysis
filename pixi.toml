@@ -1,0 +1,94 @@
+[workspace]
+name = "element-gene-power-analysis"
+description = "SCEPTRE-based power analysis for element-gene pairs in single-cell CRISPR screens"
+channels = ["conda-forge", "bioconda"]
+platforms = ["linux-64", "osx-arm64"]
+
+# sceptre is installed from a pinned GitHub commit by `pixi run setup`, not from a conda
+# channel: it is not published on conda-forge or bioconda. The pipeline reads several
+# *unexported* S4 slots of `sceptre_object`, so the version must be pinned exactly and
+# verified by `pixi run check-api`. See docs/development.md.
+[activation.env]
+R_LIBS_USER = "$PIXI_PROJECT_ROOT/.pixi/rlibs"
+SCEPTRE_REF = "v0.10.3"
+SCEPTRE_SHA = "9faa4373d1b72164b630fa03c597e52e668a4e03"
+
+# Runtime dependencies. Kept deliberately small: our own scripts use base R for all file
+# I/O and data manipulation (read.delim/write.table/merge/aggregate) rather than pulling in
+# the tidyverse. Every entry below is either called by our code or reached by the sceptre
+# code path this pipeline uses -- each one verified by grepping sceptre's sources, not by
+# copying its DESCRIPTION.
+[dependencies]
+r-base = "4.4.*"
+r-optparse = "*"      # CLI parsing for every bin/ script
+nextflow = "*"        # pipeline runner (the only package from bioconda)
+
+# --- reached by the sceptre functions we call (run_discovery_analysis, get_result,
+#     import_data, set_analysis_parameters, assign_grnas, run_qc) --------------------
+r-matrix = "*"        # sceptre NAMESPACE import; also used directly by our scripts
+r-bh = "*"            # sceptre NAMESPACE import
+r-rcpp = ">=1.0.9"    # sceptre NAMESPACE import
+r-dplyr = "*"         # s4_analysis_functs_*, pairwise_qc_functs, import_functs, assign_grna_functions
+# quoted: an unquoted r-data.table would parse as the dotted TOML key r-data.table
+"r-data.table" = "*"  # medium_level_functs_v2, pairwise_qc_functs, aux_functions
+r-purrr = "*"         # purrr::flatten() in medium_level_functs_v2.R:123,205 (precomputation path)
+r-crayon = "*"        # console messages in check_functions, import_functs, s4_helpers
+
+# No Bioconductor packages are required. The old pipeline used SingleCellExperiment purely
+# as a container -- a per-gene table, a per-cell table, two sparse perturbation matrices,
+# and row/column subsetting. Nothing on the live code path touched rowRanges or any genomic
+# range (the only GRanges use was in filt_max_dist_pert(), part of the dead code removed in
+# Step 1), so bin/lib/sim_input.R replaces it with a plain list plus subset helpers. That
+# drops SingleCellExperiment, SummarizedExperiment, S4Vectors, GenomicRanges, IRanges,
+# GenomeInfoDb, GenomeInfoDbData, DelayedArray, MatrixGenerics, Biobase, BiocGenerics,
+# XVector, S4Arrays, SparseArray, abind and zlibbioc.
+#
+# It also sidesteps a real setup failure: bioconductor-genomeinfodbdata installs its data
+# through a conda post-link script, which pixi skips by default, so GenomeInfoDb -- and
+# therefore SingleCellExperiment -- could not be loaded at all without every user first
+# running `pixi config set --local run-post-link-scripts insecure`.
+#
+# Deliberately NOT included, unlike the old envs/power_analysis.yml:
+#   bioconductor-deseq2      only reachable via fit_negbinom_deseq2(), which nothing calls;
+#                            poscounts size factors are computed directly in
+#                            prepare_sim_input.R
+#   bioconductor-rtracklayer referenced nowhere in the codebase
+#   r-devtools               was only there to install_github(sceptre) at runtime, which
+#                            raced across parallel tasks and wrote into the shared env
+#   r-tidyverse/r-readr/     replaced by base R in our scripts
+#   r-tibble
+
+# Building sceptre from source needs a compiler toolchain, remotes, and -- as verified by
+# a failed install -- every package in sceptre's DESCRIPTION Imports, because R CMD INSTALL
+# enforces that field even for packages absent from NAMESPACE. ggplot2, cowplot and scales
+# are needed *only* for that check: at runtime they are confined to plotting_functions.R,
+# qq_plot_helpers.R and write_outputs_to_directory(), none of which this pipeline calls. So
+# they stay out of the runtime environment that every Nextflow task activates.
+[feature.build.dependencies]
+r-remotes = "*"
+c-compiler = "*"
+cxx-compiler = "*"
+r-ggplot2 = "*"
+r-cowplot = "*"
+r-scales = "*"
+
+[feature.dev.dependencies]
+r-testthat = "*"
+
+[environments]
+build = ["build"]
+dev = ["dev"]
+
+[tasks]
+check-api = { cmd = "Rscript bin/check_sceptre_api.R", description = "Verify the pinned sceptre exposes every internal slot the pipeline depends on" }
+pipeline-test = { cmd = "nextflow run . -profile test,local", description = "End-to-end run on synthetic data" }
+install-hooks = { cmd = "git config core.hooksPath .githooks && echo 'core.hooksPath -> .githooks'", description = "Enable the repository pre-commit hook" }
+lint = { cmd = "./.githooks/pre-commit --all", description = "Run the pre-commit checks across every tracked file" }
+
+# Scoped to the environments that carry the extra dependencies, so `pixi run setup`
+# resolves to the build environment without the caller having to name it.
+[feature.build.tasks]
+setup = { cmd = "Rscript bin/install_sceptre.R", description = "Install sceptre from the pinned commit into .pixi/rlibs" }
+
+[feature.dev.tasks]
+test = { cmd = "Rscript -e 'testthat::test_dir(\"tests\")'", description = "Run unit tests" }

@@ -1,12 +1,34 @@
-# Configuration file to run the example data.
-samples:
-  - sample1
+# Parameters for the element-gene power analysis.
+# Full descriptions: https://engreitzlab.github.io/element-gene-power-analysis/
 
+# CSV with one row per sample: sample,sceptre_object
+samplesheet: assets/samplesheet.csv
+outdir: results
+
+# Fractional decrease in expression (0.15 = 15% knockdown).
 effect_sizes:
   - 0.15
   - 0.2
 
-# Parameters for the power analysis
+# Monte-Carlo replicates per element-gene pair.
 num_replicates: 100
-num_batches: 10
-reps: 20
+
+# Spread of per-gRNA effect sizes around the target effect size.
+guide_sd: 0.13
+
+# Parallelisation only; does not affect results.
+n_splits: 280
+reps_per_chunk: 100
+
+# Base RNG seed.
+seed: 20250812
+
+# Power level used for min_detectable_effect_size, and confidence level for the
+# interval reported with each estimate.
+power_threshold: 0.8
+conf_level: 0.95
+
+# Optional, unset by default.
+# alpha: 0.05                 # p-value threshold; otherwise derived from the sceptre object
+# n_control_cells: 5000       # sample controls rather than using all; reduces power
+# cell_batches: batch_factor  # covariate to stratify control sampling by

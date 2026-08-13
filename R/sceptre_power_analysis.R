@@ -62,105 +62,117 @@ discovery_pairs_which_pass_qc <- final_sceptre_object@discovery_pairs_with_info[
 perts <- intersect(discovery_pairs_split$grna_group, discovery_pairs_which_pass_qc$grna_group)
 
 # Set up an empty datafame to store the results
-discovery_results <- data.frame()
+discovery_results <- list()
+discovery_result_idx <- 0L
 
 
 ###  Doing Thing =========================================================
 
 # Runs each power analysis rep for one perturbation
 for (pert in perts){
-  
+
   # Get a list of the relevant discovery pairs
   discovery_relevant_pairs_pert <- discovery_pairs_which_pass_qc[discovery_pairs_which_pass_qc$grna_group == pert,]
-  
+
   # Get all the guides that target the current `pert`
   pert_guides <- grna_groups_table %>%
     filter(grna_target == pert) %>%
-    pull(grna_id)  
-  
-  
+    pull(grna_id)
+
+
   # Assigning appropriate sampling function based on status of n_ctrl
   message("Assigning pert_input_function with n_ctrl value")
   if (is.numeric(n_ctrl)) {
     pert_object <- pert_input_sampled(pert, sce = sce, pert_level = "cre_perts", n_ctrl = n_ctrl, cell_batches = "cell_batches")
   } else if (n_ctrl == FALSE) {
     pert_object <- pert_input(pert, sce = sce, pert_level = "cre_perts")
-  } 
-  
+  }
+
   # get perturbation status and grna perturbations for all cells
   pert_status <- colData(pert_object)$pert
   grna_perts <- assay(altExp(pert_object, "grna_perts"), "perts")
   # Convert to a sparse matrix, so the sampling function works in `create_guide_pert_status`
-  grna_perts <- as(grna_perts, "CsparseMatrix") 
+  grna_perts <- as(grna_perts, "CsparseMatrix")
   grna_pert_status <- create_guide_pert_status(pert_status, grna_perts = grna_perts, pert_guides = pert_guides)
-  
+
   # Subset the pert_object for only those genes which are tested against the current pert
   pert_genes <- discovery_relevant_pairs_pert$response_id
   pert_object <- pert_object[pert_genes,]
-  
+
   # Create effect size matrix (sampled from negative binomial distribution around effect_size or 1)
   effect_sizes <- structure(rep(effect_size, nrow(pert_object)), names = rownames(pert_object))
-  
+
   for (rep in seq(reps)) {
-    
+
     # Create and center effect size matrices
     es_mat <- create_effect_size_matrix(grna_pert_status, pert_guides = pert_guides,
                                         gene_effect_sizes = effect_sizes, guide_sd = guide_sd)
     es_mat <- center_effect_size_matrix(es_mat, pert_status = pert_status, gene_effect_sizes = effect_sizes)
     es_mat_use <- es_mat[, colnames(assay(pert_object, "counts"))]
-    
+
     # Simulate Counts
     message("Simulating Counts")
     sim_counts <- sim_tapseq_sce(pert_object, effect_size_mat = es_mat_use)
-    
+
     # Now let's set up the discovery_analysis
     message("Setting up sceptre object for Disovery Analysis")
     full_response_matrix_sim_sparse <-  as(assay(sim_counts, "counts"), "RsparseMatrix")
     sceptre_object_use <- final_sceptre_object
-    
+
     message("The class of what's being assigned to the response matrix")
     sceptre_object_use@response_matrix <- list(full_response_matrix_sim_sparse)
     sceptre_object_use@discovery_pairs_with_info <- discovery_relevant_pairs_pert
-    
-    
+
+
     # Fix the `cells_in_use` parameter for indexing when the n_ctrl is not FALSE
     if (is.numeric(n_ctrl)) {
       sceptre_object_use@cells_in_use <- seq(dim(full_response_matrix_sim_sparse)[[2]])
-      
+
       # Only keep the covariate rows that are in the colnames of `full_response_matrix_sim_sparse`
       sceptre_object_use@covariate_data_frame <- sceptre_object_use@covariate_data_frame[rownames(sceptre_object_use@covariate_data_frame) %in% colnames(full_response_matrix_sim_sparse),]
       sceptre_object_use@covariate_matrix <- sceptre_object_use@covariate_matrix[rownames(sceptre_object_use@covariate_matrix) %in% colnames(full_response_matrix_sim_sparse),]
-      
+
       sceptre_object_use@grna_assignments$grna_group_idxs[pert] <- list(seq(sum(colData(pert_object)$pert == 1)))
     }
 
-    
+
     message("Running discovery analysis")
     sceptre_object_use <- run_discovery_analysis(
       sceptre_object = sceptre_object_use,
       parallel = FALSE
     )
-    
+
     message("Returning discovery results")
     discovery_result <- get_result(
       sceptre_object = sceptre_object_use,
       analysis = "run_discovery_analysis"
     )
-    
+
     # Add the number of perturbed cells and the rep to each pair
     n_pert_cells <- length(sceptre_object_use@grna_assignments$grna_group_idxs[[pert]])
     discovery_result$num_pert_cells <- n_pert_cells
     discovery_result$rep <- rep
-    
+
     # Save the results
-    discovery_results <- data.frame(rbind(discovery_results, discovery_result))
+    discovery_result_idx <- discovery_result_idx + 1L
+    discovery_results[[discovery_result_idx]] <- discovery_result
+
+    rm(es_mat, es_mat_use, sim_counts, full_response_matrix_sim_sparse, sceptre_object_use)
+    gc()
   }
 }
 
+discovery_results <- bind_rows(discovery_results)
+
 # Add the average expression
-average_expr = data.frame(
-  response_id = rownames(sce), 
-  average_expression_all_cells = rowMeans(counts(sce))
+if ("average_expression_all_cells" %in% colnames(rowData(sce))) {
+  average_expression_all_cells <- rowData(sce)[, "average_expression_all_cells"]
+} else {
+  average_expression_all_cells <- Matrix::rowMeans(assay(sce, "counts"))
+}
+average_expr <- data.frame(
+  response_id = rownames(sce),
+  average_expression_all_cells = average_expression_all_cells
 )
 discovery_results <- left_join(discovery_results, average_expr, by = "response_id")
 
@@ -179,4 +191,3 @@ message("Closing log file")
 sink()
 sink(type = "message")
 close(log)
-
