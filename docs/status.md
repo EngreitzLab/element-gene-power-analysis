@@ -96,7 +96,9 @@ Needed to size cluster runs. Measured, not estimated. The right-hand column is S
 | Perturbed cells per pair | median 396 (IQR 195–542, max 1,927) | |
 | Discovery p-value threshold | 7.71404 × 10⁻⁴ | |
 | One `run_discovery_analysis()` call | 3.4–4.8s | **~9.7s** |
-| Cost model, per (target, replicate) | — | **4.91s + 0.459s × pairs** (R² = 0.968, 36 targets) |
+| Cost model, per (target, replicate) | — | **4.91s + 0.459s × pairs** (R² = 0.968, 36 targets); **3.66s + 0.512s × pairs** when the per-target setup is timed separately |
+| Per-target setup, once | — | **2.8–3.0s** (0.03s per replicate at 100 reps) |
+| Where a call spends its time | — | **`glm.fit` 59 %** (the per-gene null model), `rnbinom` 7 % — see the null-model section |
 | **Total at 100 replicates** | ~295 CPU-h per effect size | **~858 CPU-h per effect size** |
 | Peak RAM, simulation task | 1.5 GB → request 4 GB | ~1.9 GB heap → 8 GB requested |
 | Peak RAM, `prepare_sim_input.R` | 7.7 GB → request 12 GB | 16 GB requested, ~70s |
@@ -130,6 +132,45 @@ gene sets are disjoint, which is Step 9 below. Consequences worth internalising 
 
 ---
 
+## Unresolved — which per-gene null model does the simulation test against?
+
+Found while profiling, not yet settled, and it bears on every power number rather than on
+performance. **Read this before trusting a power estimate to two decimal places.**
+
+Before testing any pair, sceptre fits a Poisson GLM of the gene's counts on the cell covariates
+(`perform_response_precomputation`, `precomputation_functions.R:13`) — the null model the perturbed
+cells are compared against. It **skips that fit when `@response_precomputations` already holds an
+entry for the `response_id`** (`medium_level_functs_v2.R:63`, reached because
+`run_outer_regression <- calibration_check || control_group_complement` and our
+`control_group_complement` is `TRUE`).
+
+Two measured facts follow:
+
+- That fit is **59 % of the total call time** — `glm.fit` is 27 % self / 59 % total under `Rprof`,
+  against 7 % for our own `rnbinom` draws. It is the single largest cost in the pipeline.
+- `sceptre_template.rds` **inherits 272 precomputations from the real discovery analysis**, so for
+  whatever subset of genes that cache covers, simulated counts are being tested against coefficients
+  fitted to *real* counts, and for the rest sceptre refits on the simulated counts. That is
+  inconsistent across genes, and it is not what a faithful emulation would do: the real analysis fits
+  its null model on the data it is given.
+
+It is not a rounding-level choice. Swapping the cache contents on one target moved p-values by up to
+0.94 with a Spearman correlation of 0.22 — the resulting power numbers would be materially different.
+
+Job `38854980` measures three explicit configurations to settle it: `as_is` (the inherited real-data
+cache, today's behaviour), `cleared` (refit on the simulated counts — the faithful reference), and
+`null_fit` (fitted once on a null simulation of the same replicate, then reused). It reports how many
+of the 237 tested genes the inherited cache even covers, how far the inherited coefficients sit from a
+fresh fit, and the p-value agreement between the three. **Verdict pending.**
+
+Note the pre-refactor pipeline inherited the same cache, so the old-vs-new comparison is unaffected —
+the question is whether *both* are right. If `cleared` is the correct reference, the fix is cheap
+(clear the slot in `prepare_sim_input.R`) but it makes every call ~2.4× dearer, and the `null_fit`
+option then becomes the way to buy the cost back: fit once per (gene, replicate) on simulated counts
+and reuse across the ~147 targets a gene pairs with.
+
+---
+
 ## Left to do
 
 ### Step 7 — Nextflow + SLURM profile
@@ -158,6 +199,30 @@ Notes for whoever builds it:
   from the fan-out.
 - Removing `Snakefile`, `rules/` and `R/` belongs to this step. That also turns `pixi run lint`
   green: it currently flags exactly those legacy files.
+
+#### Why not sceptre's own Nextflow pipeline
+
+sceptre now ships one (`timothy-barry/sceptre-pipeline`). It is the right tool for a **real**
+discovery analysis and the wrong one for a power simulation. Evaluated against a clone of it:
+
+- **It requires ondisc matrices.** Every script calls
+  `read_ondisc_backed_sceptre_object(sceptre_object_fp, response_odm_fp, grna_odm_fp)`, with no
+  in-memory path. Using it would mean serialising each simulated matrix to ODM.
+- **The simulation needs one object per gene-disjoint batch, not one per replicate** — the same
+  constraint as Step 9, since a gene is paired with ~147 targets. That is 100 × 300 = 30,000 objects
+  for one effect size, each needing its own ODM.
+- **It re-runs everything upstream per object.** The workflow is `set_analysis_parameters ->
+  prepare_assign_grnas -> assign_grnas -> combine -> run_qc -> prepare -> analysis`, unconditionally;
+  `pipeline_stop` truncates the tail but cannot skip the head. gRNA assignment alone is 43,432 gRNAs
+  at their own `2s`/gRNA heuristic, ~24 CPU-hours per object, none of it dependent on the simulated
+  response matrix.
+- **Its `0.05s` per pair is a walltime heuristic, not a benchmark** — `run_association_analysis_time_per_pair`,
+  used to size `--time`. It is not comparable to our measured per-pair cost.
+
+What is worth taking from it: `prepare_association_analyses.R` sorts pairs by `response_id` and pods
+on that key, so all ~147 pairs of a gene share one `@response_precomputations` entry — one GLM fit
+serving 147 tests. That is the same insight as Step 9 (pool more pairs per call) and it is what led to
+the null-model question above.
 
 ### Step 8 — tests and comparisons
 
@@ -219,13 +284,14 @@ are orthogonal.
 
 **Three things to check before building it.**
 
-1. **413 CPU-h is an upper bound on what is recoverable.** The 4.91s intercept was fitted to the
-   step 3 smoke test, which ran **2 replicates** per target, so the per-target setup outside the
-   replicate loop (`pert_input`, `create_guide_pert_status`, `subset_genes` —
-   `run_power_simulation.R` lines 163–188) was amortized over 2 reps, not 100. The real run spreads
-   it 50× thinner, so part of what the fit calls per-call overhead is not recoverable.
-   The 100-replicate array measures this directly — read it off `sacct` before committing to a
-   rewrite.
+1. **413 CPU-h was an upper bound, and profiling has since brought it down to ~308.** The 4.91s
+   intercept was fitted to the step 3 smoke test, which ran **2 replicates** per target, so the
+   per-target setup outside the replicate loop (`pert_input`, `create_guide_pert_status`,
+   `subset_genes` — `run_power_simulation.R` lines 163–188) was amortized over 2 reps, not 100.
+   Timing that setup separately puts it at **2.8–3.0s once per target**, i.e. 0.03s per replicate at
+   100 reps — negligible. Re-fitting the model on three profiled targets gives **3.66s + 0.512s ×
+   pairs**, so the genuinely recoverable per-call overhead is ~308 CPU-h and **Step 9's ceiling is
+   ~1.5×, not 1.77×**. The three-target fit is thin; the 100-replicate array will settle it.
 2. **Memory.** A 194-gene batch is 194 × 586,309 dense doubles ≈ 0.9 GB for the count matrix and as
    much again for the effect-size matrix, against ~54 MB per target today. The 8 GB request may
    hold but has not been tested.
