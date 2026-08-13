@@ -1,109 +1,34 @@
 # Parameters for the element-gene power analysis.
-#
-# Every value here is a real, read parameter. Several of these were previously hardcoded inside
-# the R scripts, and one key in the old config (`reps: 20`) was never read by anything -- the
-# rule passed `num_replicates` instead, so editing `reps` silently did nothing.
-#
-# Usage:
-#   nextflow run . -params-file config/config.yml -profile slurm
-#
-# Individual scripts in bin/ take these as command-line arguments and can be run standalone;
-# see docs/usage.md.
+# Full descriptions: https://engreitzlab.github.io/element-gene-power-analysis/
 
-# --- inputs -------------------------------------------------------------------------------------
-
-# CSV listing one row per sample: sample,sceptre_object
-# Replaces the old convention of placing files at results/<sample>/ with fixed names.
+# CSV with one row per sample: sample,sceptre_object
 samplesheet: assets/samplesheet.csv
-
 outdir: results
 
-# --- what to simulate ---------------------------------------------------------------------------
-
-# Effect sizes as *fractional decreases* in expression: 0.15 means a 15% knockdown. Converted
-# internally to a relative expression level of 1 - effect_size.
+# Fractional decrease in expression (0.15 = 15% knockdown).
 effect_sizes:
   - 0.15
   - 0.2
 
-# Monte-Carlo replicates per element-gene pair. This is the only parameter with statistical
-# content: power is a binomial proportion over this many replicates, so the standard error is
-# sqrt(p(1-p)/num_replicates) and the estimate can only take multiples of 1/num_replicates.
-#
-#   100  standard error <= 0.05, 95% CI +/- 0.10 at worst. Fine for aggregate summaries and for
-#        reporting per-pair power alongside its confidence interval.
-#   400  needed if you make per-pair decisions at a cutoff (e.g. "keep pairs with power >= 0.8"),
-#        where 100 replicates leave the boundary fuzzy by about +/- 0.08.
-#
-# Before raising this uniformly, read docs/choosing-num-replicates.md: most pairs sit at 0 or 1
-# where extra replicates buy nothing, and a two-stage design reaches 400-level precision for
-# roughly a quarter of the cost.
+# Monte-Carlo replicates per element-gene pair.
 num_replicates: 100
 
-# Standard deviation of the per-gRNA effect size around the target effect size, i.e. how much
-# guides targeting the same element differ in strength. Was hardcoded at 0.13.
+# Spread of per-gRNA effect sizes around the target effect size.
 guide_sd: 0.13
 
-# --- significance threshold ---------------------------------------------------------------------
-
-# A simulated replicate counts as a discovery when its p-value beats the largest nominal p-value
-# that survived multiple-testing correction in the real discovery analysis. That threshold is read
-# from the sceptre object's own discovery results, so nothing needs to be set here.
-#
-# Set `alpha` only if your sceptre object has no discovery results to derive it from. A bare alpha
-# does not reflect the multiple-testing correction actually applied to the real data, so the
-# derived threshold is preferred whenever it is available.
-# alpha: 0.05
-
-# --- parallelisation (no effect on results) -----------------------------------------------------
-
-# How many chunks to split the perturbation targets into; one task per chunk per effect size.
-# Purely computational: results are invariant to this, because RNG seeds are derived per
-# (seed, target, replicate, effect_size) rather than per task.
-#
-# Sizing: aim for roughly an hour per task. On a 2,798-target dataset at 100 replicates, one
-# target takes ~6 minutes, so ~10 targets per task -> 280 splits. Keep it under your cluster's
-# MaxArraySize (commonly 1000).
+# Parallelisation only; does not affect results.
 n_splits: 280
-
-# Replicates per task. Leave equal to num_replicates (no chunking) unless a single task would
-# exceed your queue time limit, or you need more than one-target-per-task parallelism. Splitting
-# costs one extra input load per task; chunking replicates re-pays the per-target setup once per
-# chunk, so prefer more splits over more chunks.
 reps_per_chunk: 100
 
-# Base RNG seed. Required for reproducibility -- the simulation is stochastic and the original
-# pipeline seeded nothing, so no run could be reproduced. Keep this fixed to be able to extend an
-# existing run with more replicates.
+# Base RNG seed.
 seed: 20250812
 
-# --- control cells (advanced; leave unset) ------------------------------------------------------
-
-# Number of control cells to sample per target instead of using every non-perturbed cell.
-#
-# MEASURED AND NOT RECOMMENDED. It looks like a large speedup but it biases power downward
-# substantially, because sceptre's conditional randomisation test needs enough cells to resolve
-# the null tail at the significance threshold. On the reference dataset, against all controls:
-#
-#   n_control_cells    power retained
-#   1,000                    39.5%
-#   5,000                    70.6%
-#   20,000                   78.5%
-#
-# Leave unset unless you have validated the loss on your own data. See docs/methods.md.
-# n_control_cells: 5000
-
-# Column of the sceptre object's cell covariates used to stratify control sampling, so controls
-# match the perturbed cells' composition. Only meaningful with n_control_cells. Note the column
-# is named per dataset -- e.g. `batch_factor`, not `batch`; prepare_sim_input.R logs which
-# categorical covariates are available.
-# cell_batches: batch_factor
-
-# --- output -------------------------------------------------------------------------------------
-
-# Power level used to derive min_detectable_effect_size: the smallest tested effect size at which
-# a pair reaches this power.
+# Power level used for min_detectable_effect_size, and confidence level for the
+# interval reported with each estimate.
 power_threshold: 0.8
-
-# Confidence level for the Wilson interval reported with every power estimate.
 conf_level: 0.95
+
+# Optional, unset by default.
+# alpha: 0.05                 # p-value threshold; otherwise derived from the sceptre object
+# n_control_cells: 5000       # sample controls rather than using all; reduces power
+# cell_batches: batch_factor  # covariate to stratify control sampling by
