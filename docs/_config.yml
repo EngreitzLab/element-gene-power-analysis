@@ -1,0 +1,26 @@
+title: element-gene-power-analysis
+description: >-
+  SCEPTRE-based power analysis for element-gene pairs in single-cell CRISPR screens.
+  Per-pair power with confidence intervals, expected discoveries, and minimum detectable
+  effect sizes.
+
+# Pinned to a Jekyll-3-compatible release, because GitHub's jekyll-build-pages action uses the
+# github-pages gem (Jekyll 3.9). just-the-docs v0.4+ requires Jekyll 4 and will fail to build
+# here. If the Pages build ever breaks, the zero-risk fallback is to replace this line with
+#   theme: jekyll-theme-primer
+# which GitHub Pages supports natively.
+remote_theme: just-the-docs/just-the-docs@v0.3.3
+
+color_scheme: light
+search_enabled: true
+heading_anchors: true
+
+aux_links:
+  "GitHub repository":
+    - "https://github.com/EngreitzLab/element-gene-power-analysis"
+
+# Only the documentation lives here; nothing else in the repo should be published.
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor
