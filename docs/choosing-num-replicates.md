@@ -208,7 +208,8 @@ seconds per (target, replicate) = 4.91 + 0.459 × (pairs in that target)      R�
 
 which puts **48 % of the bill in a per-target term that pair counts do not touch**: one
 `run_discovery_analysis()` call carries the full 586,309-cell bookkeeping however few gene pairs
-ride along, and targets cannot be merged into one call: perturbation status differs per target.
+ride along. Two targets can only share a call when their gene sets are disjoint — see Step 9 in
+[Status]({{ site.baseurl }}{% link status.md %}).
 
 | `num_replicates` | CPU-hours per effect size |
 |---:|---:|

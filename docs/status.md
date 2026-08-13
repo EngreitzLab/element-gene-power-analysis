@@ -117,8 +117,8 @@ Both ran 100 replicates on the same dataset, so this is like for like. The CPU w
 wall-clock win is mostly the unthrottled array rather than the code.
 
 **48 % of the cost is the per-target term** — one `run_discovery_analysis()` call carries the full
-586,309-cell bookkeeping however few gene pairs ride along, and targets cannot be merged because
-perturbation status differs per target. Consequences worth internalising before optimising:
+586,309-cell bookkeeping however few gene pairs ride along. Targets can only share a call when their
+gene sets are disjoint, which is Step 9 below. Consequences worth internalising before optimising:
 
 - Halving the *pairs* saves ~26 %, not 50 %. Halving the *replicates* saves exactly 50 %.
 - Filtering pairs for a second pass is much dearer than it looks: the 4,322 pairs whose interval
@@ -170,6 +170,74 @@ Notes for whoever builds it:
 4. **Two-stage replicate allocation** — documented in
    [Choosing num_replicates]({{ site.baseurl }}{% link choosing-num-replicates.md %}) but not
    orchestrated. The scripts already support it through `--rep-offset`.
+
+### Step 9 — batch gene-disjoint targets into one sceptre call
+
+Not started, and the largest single saving left on the table: **up to 1.8×**, worth about 370
+CPU-hours per effect size. Costed below because the reasoning is easy to get wrong in both
+directions.
+
+**Where the cost is.** The unit of work is one `run_discovery_analysis()` call per (target,
+replicate) — 3,026 × 100 = **302,600 calls per effect size** — and each one carries the full
+586,309-cell setup regardless of how few gene pairs it covers. That per-call term is 4.91s of the
+`4.91s + 0.459s × pairs` model, so it is 413 of the 858 CPU-hours: **half the bill is setup paid
+and over**.
+
+**Why the obvious fix does not work.** The tempting version is one simulated object per replicate
+covering all 34,886 pairs, so the setup is paid 100 times instead of 302,600. It is not valid. Each
+gene is paired with **147 targets on average, up to 299** — only 10 of 237 genes belong to a single
+target — and pair (A, g) needs gene g knocked down in A's perturbed cells while pair (B, g) needs it
+knocked down in B's. One response matrix cannot hold both. Applying every knockdown at once puts
+B-perturbed cells, also knocked down, into A's control group, which shrinks the contrast and
+**understates power**. The pre-refactor pipeline was per-target for the same reason; this is not an
+artifact of the refactor.
+
+**What does work.** Two targets can share a call whenever their gene sets are disjoint, because a
+knockdown on gene `gA` never touches gene `gB`'s row. Cell overlap is fine: a cell with gRNAs for
+both A and B is in each one's treatment group for its own gene, and unmodified for the other's.
+Greedy first-fit over the real pair table gives **300 batches**, against a lower bound of 299 forced
+by the gene that appears in 299 targets — so greedy is essentially optimal here.
+
+| | Now | Gene-disjoint batches |
+|---|---:|---:|
+| sceptre calls per effect size | 302,600 | **30,000** (300 batches × 100 reps) |
+| Per-call overhead | 413 CPU-h | **41 CPU-h** |
+| Per-pair work (`rnbinom` draws) | 445 CPU-h | 445 CPU-h |
+| **Total** | **858** | **486 CPU-h — 1.77×** |
+
+Batches hold at most 31 targets, 194 pairs and 194 of the 237 genes.
+
+**The per-pair term does not move, and that bounds the win.** Gene `g` is still simulated once for
+every target it pairs with, so the total `rnbinom` volume is unchanged. This is 1.8×, not the
+10× the call-count ratio suggests.
+
+**`parallel = TRUE` is a different question and probably not the lever.** sceptre's internal
+parallelism forks across pairs within a call; the array fan-out already provides that parallelism
+across nodes, without fork overhead and without pinning a replicate to one node's cores. It does not
+reduce the number of calls, which is where the waste is. Batching and who-schedules-the-parallelism
+are orthogonal.
+
+**Three things to check before building it.**
+
+1. **413 CPU-h is an upper bound on what is recoverable.** The 4.91s intercept was fitted to the
+   step 3 smoke test, which ran **2 replicates** per target, so the per-target setup outside the
+   replicate loop (`pert_input`, `create_guide_pert_status`, `subset_genes` —
+   `run_power_simulation.R` lines 163–188) was amortized over 2 reps, not 100. The real run spreads
+   it 50× thinner, so part of what the fit calls per-call overhead is not recoverable.
+   The 100-replicate array measures this directly — read it off `sacct` before committing to a
+   rewrite.
+2. **Memory.** A 194-gene batch is 194 × 586,309 dense doubles ≈ 0.9 GB for the count matrix and as
+   much again for the effect-size matrix, against ~54 MB per target today. The 8 GB request may
+   hold but has not been tested.
+3. **Linearity.** The `0.459s` slope was fitted over 5–36 pairs per call. Batches carry up to
+   194, and sceptre's per-call cost has not been shown to stay linear that far out.
+
+**Shape of the change.** A batching function (first-fit over gene sets, ordered deterministically so
+layout is reproducible), the target loop in `run_power_simulation.R` iterating batches instead of
+single targets, and `split_pairs.R` splitting on batches, not targets. Seeds must stay derived
+from `(seed, target, rep, effect_size)` so results remain invariant to the batch layout, exactly as
+they are invariant to the split layout today — that invariance is also what makes the two designs
+directly comparable pair by pair.
 
 ### Step 10 — re-derive the environment
 
