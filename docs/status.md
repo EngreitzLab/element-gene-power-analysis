@@ -98,7 +98,7 @@ Needed to size cluster runs. Measured, not estimated. The right-hand column is S
 | One `run_discovery_analysis()` call | 3.4–4.8s | **~9.7s** |
 | Cost model, per (target, replicate) | — | **4.91s + 0.459s × pairs** (R² = 0.968, 36 targets); **3.66s + 0.512s × pairs** when the per-target setup is timed separately |
 | Per-target setup, once | — | **2.8–3.0s** (0.03s per replicate at 100 reps) |
-| Where a call spends its time | — | **`glm.fit` 59 %** (the per-gene null model), `rnbinom` 7 % — see the null-model section |
+| Where a call spends its time | — | **`glm.fit` 59 %** total / 27 % self, `rnbinom` 7 % — measured *with* the inherited cache, so this is not the skipped per-gene null fit; see the null-model section |
 | **Total at 100 replicates** | ~295 CPU-h per effect size | **~858 CPU-h per effect size** |
 | Peak RAM, simulation task | 1.5 GB → request 4 GB | ~1.9 GB heap → 8 GB requested |
 | Peak RAM, `prepare_sim_input.R` | 7.7 GB → request 12 GB | 16 GB requested, ~70s |
@@ -146,8 +146,12 @@ entry for the `response_id`** (`medium_level_functs_v2.R:63`, reached because
 
 Two measured facts follow:
 
-- That fit is **59 % of the total call time** — `glm.fit` is 27 % self / 59 % total under `Rprof`,
-  against 7 % for our own `rnbinom` draws. It is the single largest cost in the pipeline.
+- `glm.fit` is **27 % self / 59 % total** under `Rprof`, against 7 % for our own `rnbinom` draws, so
+  GLM fitting is the single largest cost in a call. **That 59 % is not this precomputation.** The
+  profile was taken over the current path, with the inherited cache populated and the precomputation
+  therefore skipped — so the 59 % is GLM work sceptre does anyway, and clearing the cache would add
+  the precomputation cost *on top* of it. How much it adds is unmeasured; job `38854980` is the first
+  run that clears the slot explicitly.
 - `sceptre_template.rds` **inherits 272 precomputations from the real discovery analysis, and they
   cover all 237 genes that have QC-passing pairs — none are refitted.** So every simulated count is
   tested against coefficients fitted to *real* counts. Measured directly by job `38854980`: 237 of
@@ -155,8 +159,11 @@ Two measured facts follow:
   easier to reason about but no more correct — a faithful emulation fits its null model on the data
   it is given, and the real analysis did exactly that.
 
-It is not a rounding-level choice. Swapping the cache contents on one target moved p-values by up to
-0.94 with a Spearman correlation of 0.22 — the resulting power numbers would be materially different.
+It is not a rounding-level choice. Replacing the inherited coefficients with ones fitted on a null
+simulation — `as_is` against `null_fit`, on 25 p-values from one target — moved p-values by up to
+0.942 with a Spearman correlation of 0.224. Whichever of the two is right, the other gives materially
+different power numbers. Note this pair does *not* include `cleared`, so it does not yet say which is
+closer to what sceptre would have done on the simulated counts alone.
 
 Job `38854980` measures three explicit configurations to settle it: `as_is` (the inherited real-data
 cache, today's behaviour), `cleared` (refit on the simulated counts — the faithful reference), and
@@ -165,10 +172,14 @@ of the 237 tested genes the inherited cache even covers, how far the inherited c
 fresh fit, and the p-value agreement between the three. **Verdict pending.**
 
 Note the pre-refactor pipeline inherited the same cache, so the old-vs-new comparison is unaffected —
-the question is whether *both* are right. If `cleared` is the correct reference, the fix is cheap
-(clear the slot in `prepare_sim_input.R`) but it makes every call ~2.4× dearer, and the `null_fit`
-option then becomes the way to buy the cost back: fit once per (gene, replicate) on simulated counts
-and reuse across the ~147 targets a gene pairs with.
+the question is whether *both* are right. If `cleared` is the correct reference, the code fix is one
+line (clear the slot in `prepare_sim_input.R`); the cost of that fix is **not yet known** and is what
+job `38854980` measures. `null_fit` is then the way to buy the cost back: fit once per
+(gene, replicate) on a null simulation and reuse across the ~147 targets a gene pairs with.
+
+An earlier version of this section put the cost of `cleared` at ~2.4× per call. That number was
+`1 / (1 - 0.59)` applied to the `glm.fit` share above, and since that share is not the
+precomputation, it had no basis. Do not quote it.
 
 ---
 
