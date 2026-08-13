@@ -4,9 +4,12 @@
 ## Ported from R/power_simulations_fun.R. fit_negbinom_deseq2() is not carried over: nothing
 ## called it, and it was the only reason the pipeline depended on DESeq2.
 ##
-## The numerical behaviour is deliberately unchanged from the original, including the order of
-## RNG draws (sample() for the size factors, then a single rnbinom() over the whole matrix), so
-## that a fixed seed reproduces the old pipeline's output exactly. See tests/.
+## The numerical behaviour follows the original with one deliberate exception: the original drew
+## a random permutation of the size factors before simulating, decoupling each cell's library
+## size from its identity. That shuffle is wrong -- the size factor belongs to the cell whose
+## counts are being simulated -- so it has been removed and each cell now keeps its own size
+## factor. This also removes a sample() call from the RNG stream, so a given seed no longer
+## reproduces the pre-refactor output draw for draw.
 
 suppressPackageStartupMessages(library(Matrix))
 
@@ -28,15 +31,14 @@ draw_counts <- function(x, effect_size_mat) {
          " but ", n_gene, " x ", n_cell, " was expected.", call. = FALSE)
   }
 
-  # Cell-to-cell variability. Shuffled, as in the original: the size factors are decoupled from
-  # the specific cells so that the simulated library sizes are a random draw from the observed
-  # distribution rather than tied to each cell's identity.
-  shuffled_size_factors <- sample(size_factors, n_cell, replace = FALSE)
-
+  # Cell-to-cell variability. Each cell keeps its own size factor: the effect-size matrix is
+  # indexed by cell, so shuffling would pair one cell's perturbation status with another cell's
+  # library size.
+  #
   # mu[i, j] = gene_means[i] * size_factor[j] * effect_size[i, j].
   # outer() replaces the original matrix(rep(...)) + sweep() pair: same values, one allocation
   # instead of three.
-  mu <- outer(gene_means, shuffled_size_factors) * effect_size_mat
+  mu <- outer(gene_means, size_factors) * effect_size_mat
 
   # size = theta = 1 / dispersion. mu is consumed column-major, and `size` recycles over the
   # gene index, which is why gene_dispersions must be exactly n_gene long -- see
