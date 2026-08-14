@@ -27,6 +27,9 @@ include { PREPARE_SIM_INPUT } from './modules/local/prepare_sim_input'
 include { SPLIT_PAIRS       } from './modules/local/split_pairs'
 include { FIT_NULL_MODELS   } from './modules/local/fit_null_models'
 include { MERGE_NULL_MODELS } from './modules/local/merge_null_models'
+include { POWER_SIMULATION  } from './modules/local/power_simulation'
+include { COMPUTE_POWER     } from './modules/local/compute_power'
+include { SUMMARIZE_POWER   } from './modules/local/summarize_power'
 
 workflow {
     main:
@@ -141,6 +144,45 @@ workflow {
 
     def merged_reps = params.test_max_null_reps ?: params.num_replicates
     MERGE_NULL_MODELS(ch_chunks, merged_reps)
+
+    // ---- step 4: the simulation ------------------------------------------------------------
+    //
+    // The per-sample inputs are one item; the fan-out is the cross product of splits, effect sizes
+    // and replicate chunks. Joining the null models in first keeps the sample's five inputs
+    // together, so `combine` only ever multiplies out the things that genuinely vary.
+    ch_sim_inputs = ch_prepared.join(MERGE_NULL_MODELS.out.null_models)
+
+    ch_rep_chunks = Channel
+        .of(0..<(params.num_replicates.intdiv(params.reps_per_chunk)))
+        .map { i -> [ i * params.reps_per_chunk, params.reps_per_chunk ] }
+
+    // combine on the meta key so a multi-sample run pairs each sample with its own splits rather
+    // than with every sample's.
+    // No trailing map: `combine` flattens the [offset, reps] pair into two elements rather than
+    // keeping it as one, so this already emits the nine fields POWER_SIMULATION declares --
+    // meta, sim_input, template, grna_targets, null_models, split, effect_size, rep_offset, reps.
+    ch_sim_tasks = ch_sim_inputs
+        .combine(ch_splits, by: 0)
+        .combine(Channel.fromList(params.effect_sizes))
+        .combine(ch_rep_chunks)
+
+    POWER_SIMULATION(ch_sim_tasks)
+
+    // ---- step 5: power, per (sample, effect size) -------------------------------------------
+    //
+    // groupTuple over (meta, effect size) collects every split's output for one effect size.
+    // Deliberately not collectFile: compute_power.R takes the file list itself and validates the
+    // replicate count per pair, which a concatenation would hide.
+    ch_by_es = POWER_SIMULATION.out.sim.groupTuple(by: [0, 1])
+
+    COMPUTE_POWER(ch_by_es, PREPARE_SIM_INPUT.out.threshold.first())
+
+    // ---- step 6: one row per pair across every effect size ---------------------------------
+    ch_all_power = COMPUTE_POWER.out.power
+        .map { meta, es, power -> [meta, power] }
+        .groupTuple()
+
+    SUMMARIZE_POWER(ch_all_power)
 }
 
 workflow.onComplete {
