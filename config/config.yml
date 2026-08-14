@@ -5,9 +5,21 @@
 # workflow/slurm_executor/config.sh, which cannot parse YAML in bash without more fragility than it
 # is worth. If you change a value here, change it there too -- the two runners disagreeing about
 # what a run means is exactly the kind of bug this pipeline has already been bitten by.
+#
+# Two deliberate exceptions, so the mirror is not read as absolute:
+#   * `outdir` differs on purpose -- the two runners write to separate trees so their outputs can
+#     be compared rather than overwriting each other. config.sh uses results/refactor.
+#   * `samplesheet` and `reps_per_chunk` have no config.sh equivalent: it runs one hard-coded
+#     SAMPLE and never chunks replicates.
 
 # CSV with one row per sample: sample,sceptre_object
+#
+# Every row is processed, so this is also the knob that decides how much a run costs. The default
+# lists only day0_grna20_no_shuffle, which is the sample validated against the old pipeline;
+# assets/samplesheet_all_samples.csv has all four that carry a sceptre object.
 samplesheet: assets/samplesheet.csv
+
+# Kept separate from the sbatch runner's results/refactor so the two can be compared.
 outdir: results/nextflow
 
 # Fractional decrease in expression (0.15 = 15% knockdown).
@@ -35,6 +47,15 @@ n_splits: 1000
 # Replicates per null-model task (step 02b). One fit covers every gene on one replicate in ~20
 # minutes, so 1 per task keeps the whole set at ~20 minutes rather than ~33 hours serial.
 reps_per_null_chunk: 1
+
+# Replicates per simulation task. Set equal to num_replicates for no chunking, which is what every
+# run so far has done and what the measured cost model assumes.
+#
+# Chunking splits a (split, effect size) task's replicates across several tasks, tracked by the
+# scripts' --rep-offset so the `rep` column stays unique. It exists for the two-stage allocation in
+# docs/choosing-num-replicates.md, and it is NOT free: each chunk re-pays the per-target setup, so
+# prefer raising n_splits over lowering this. See docs/status.md, "Decisions already made".
+reps_per_chunk: 100
 
 # Base RNG seed.
 seed: 20250812

@@ -26,7 +26,11 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Slurm copies the submitted script into its spool directory, so $BASH_SOURCE points there rather
+# than into the repository -- `cd` on it lands somewhere unwritable. Ask the controller where the
+# script actually came from instead. Same idiom as workflow/slurm_executor/*.sbatch.
+_cmd="$(scontrol show job "${SLURM_JOB_ID:-0}" 2>/dev/null | sed -n 's/.*Command=\([^[:space:]]*\).*/\1/p' | head -1)"
+REPO_ROOT="$(cd "$(dirname "${_cmd:-${BASH_SOURCE[0]}}")/../.." && pwd)"
 cd "${REPO_ROOT}"
 mkdir -p logs/nextflow
 
