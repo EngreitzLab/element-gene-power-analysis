@@ -167,7 +167,7 @@ echo "    wrote $(($(wc -l < "${out}") - 1)) rows"
 
 # Written only after the output is confirmed present, so an interrupted task never leaves a
 # sidecar vouching for a file that does not exist or is short.
-printf '%s' "${want_provenance}" > "${provenance}"
+printf '%s\n' "${want_provenance}" > "${provenance}"
 echo "    provenance: ${want_provenance}"
 
 report_usage

@@ -108,8 +108,8 @@ Needed to size cluster runs. Measured, not estimated. The right-hand column is S
 | Cost model, per (target, replicate) | — | **5.076s + 0.5923s × pairs** — fitted on the *full* 999-task array at 100 replicates, and the number to use. Superseded: 4.91s + 0.459s × pairs (36-target smoke test) and 3.66s + 0.512s × pairs (3 profiled targets) |
 | Per-target setup, once | — | **2.8–3.0s** (0.03s per replicate at 100 reps) |
 | Where a call spends its time | — | **`glm.fit` 59 %** total / 27 % self, `rnbinom` 7 % — measured *with* the inherited cache, so this is not the skipped per-gene null fit; see the null-model section |
-| **Total at 100 replicates** | ~295 CPU-h per effect size | **999 CPU-h per effect size — measured, not modelled** (`sacct` over the 999 completed tasks of job `38849611`; the fitted model independently gives 1,001) |
-| Per-task wall clock, measured | — | median **57.2 min**, mean 60.0, p95 85.4, max **110.1** (4 h requested → 3 h is ample) |
+| **Total at 100 replicates** | ~295 CPU-h per effect size | **999 CPU-h `as_is`, 634 CPU-h `null_fit` + gRNA reuse** — both measured, not modelled (`sacct` over jobs `38849611` and `38887744`). **Use 634**; the rest of this table predates the gRNA reuse |
+| Per-task wall clock, measured | — | `as_is`: median **57.2 min**, mean 60.0, p95 85.4, max **110.1**. `null_fit` + reuse: median **36 min**, max **61** (4 h requested → 2 h is ample) |
 | Peak RAM, simulation task | 1.5 GB → request 4 GB | **median 2.27 GB, max 3.27 GB over 1,000 tasks** (8 GB requested → 6 GB keeps 1.8× headroom) |
 | Peak RAM, `prepare_sim_input.R` | 7.7 GB → request 12 GB | 16 GB requested, ~70s |
 
@@ -280,10 +280,32 @@ What shipped:
 `@response_precomputations` and no `--null-precomputations` — rather than silently running `as_is`.
 That is the bug that went unnoticed for the entire refactor, and it can no longer recur silently.
 
-**In flight as of 2026-08-13.** The null models are built (`38879935`, merged by `38879939` into
-`prepared/null_precomputations.rds`). The `null_fit` rerun of effect size 0.15 is **`38887744`** —
-the first attempt, `38882207`, silently skipped all 1,000 tasks and was cancelled; see the resume-check
-entry under Gotchas. `02b_submit.sh` had never run successfully before commit `08b0d04`: `PASSTHROUGH[@]: unbound
+**Done as of 2026-08-13.** The null models are built (`38879935`, merged by `38879939` into
+`prepared/null_precomputations.rds`), and the `null_fit` rerun of effect size 0.15 completed as
+**`38887744`**: 1,000/1,000 tasks, every output at the exact expected row count, every output
+carrying a matching `.provenance` sidecar. Results are in `results/refactor/sim_null_fit/es0.15/`.
+The first attempt, `38882207`, silently skipped all 1,000 tasks and was cancelled — see the
+resume-check entry under Gotchas.
+
+**And it is 1.58× cheaper than the `as_is` run, not 1.7 % dearer.**
+
+| | `as_is` (`38849611`) | `null_fit` (`38887744`) |
+|---|---:|---:|
+| Tasks completed | 999 / 1000 | **1000 / 1000** |
+| Median task | 57.2 min | **36 min** |
+| Max task | 110.1 min | **61 min** |
+| CPU-h per effect size | 999 | **634** |
+
+The null model itself costs ~1.7 % more, so the saving is not from it — it is the **gRNA
+precomputation reuse**, which shipped in the same commit. That retires the "the saving is small"
+caveat recorded under the equivalence check below: 1.02× was measured on the single worst-case split
+(1 target, 36 pairs, in the `cleared` configuration), and at the median 9 pairs per target the fixed
+per-target gRNA fit is a far larger share of the call. **1.58× at production scale is the number to
+use**; the step-10 figure measured what it measured, on a split chosen to be pessimal.
+
+Note this also invalidates the cost model in the reference table for any future run: `5.076s +
+0.5923s × pairs` was fitted on `as_is` output with no gRNA reuse. Refit it on `38887744` before
+sizing the next sweep. `02b_submit.sh` had never run successfully before commit `08b0d04`: `PASSTHROUGH[@]: unbound
 variable` under `set -u`, the bash 4.2 empty-array bug already fixed in `04_submit.sh` but never
 back-ported. That is why `null_models/` was empty.
 
@@ -380,8 +402,11 @@ this is the **least favourable target in the dataset**, since 36 pairs is the ma
 median of 9, and the run was in the `cleared` configuration, which inflates the per-pair term ~5.75×.
 Against the `null_fit` model a fixed ~3s is ~8 % at 36 pairs but ~22 % at the median 9.
 
-**The "up to 2.4×" claim stays retracted and is not replaced.** A better number needs the `null_fit`
-configuration, so re-run `10_grna_precomp_equivalence` once the bundle exists.
+**The "up to 2.4×" claim stays retracted. The replacement is 1.58×, measured at production scale**
+— see the Step 6a table above, where the full `null_fit` array came in at 634 CPU-h against the
+`as_is` array's 999. Both caveats above pointed that way and the second one was right: this split is
+the least favourable in the dataset. Do not quote the 1.02× as the saving; quote it as what the
+equivalence check happened to cost on one worst-case split, which is not what it was measuring.
 
 ### Equivalence check `11_sceptre_version_equivalence` — does the version bump change results? No.
 
