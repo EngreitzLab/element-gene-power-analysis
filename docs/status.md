@@ -105,7 +105,7 @@ Needed to size cluster runs. Measured, not estimated. The right-hand column is S
 | Perturbed cells per pair | median 396 (IQR 195–542, max 1,927) | |
 | Discovery p-value threshold | 7.71404 × 10⁻⁴ | |
 | One `run_discovery_analysis()` call | 3.4–4.8s | **~9.7s** |
-| Cost model, per (target, replicate) | — | **5.076s + 0.5923s × pairs** — fitted on the *full* 999-task array at 100 replicates, and the number to use. Superseded: 4.91s + 0.459s × pairs (36-target smoke test) and 3.66s + 0.512s × pairs (3 profiled targets) |
+| Cost model, per (target, replicate) | — | **1.140s + 0.5561s × pairs** — fitted on the 999 real tasks of `38887744` (`null_fit` + gRNA reuse), and the number to use. Predicts 635 CPU-h against 634 measured. Superseded: 5.076s + 0.5923s × pairs (job `38849611`, before the gRNA reuse), 4.91s + 0.459s × pairs (36-target smoke test), 3.66s + 0.512s × pairs (3 profiled targets) |
 | Per-target setup, once | — | **2.8–3.0s** (0.03s per replicate at 100 reps) |
 | Where a call spends its time | — | **`glm.fit` 59 %** total / 27 % self, `rnbinom` 7 % — measured *with* the inherited cache, so this is not the skipped per-gene null fit; see the null-model section |
 | **Total at 100 replicates** | ~295 CPU-h per effect size | **999 CPU-h `as_is`, 634 CPU-h `null_fit` + gRNA reuse** — both measured, not modelled (`sacct` over jobs `38849611` and `38887744`). **Use 634**; the rest of this table predates the gRNA reuse |
@@ -136,9 +136,9 @@ gene sets are disjoint, which is Step 9 below. Consequences worth internalising 
 - Filtering pairs for a second pass is much dearer than it looks: the 4,322 pairs whose interval
   straddles power 0.8 (12.4 % of pairs) are spread across 1,820 of 3,026 targets, so a top-up run
   pays 60 % of the per-target overhead to redo 12 % of the pairs — 82 % of its cost is overhead.
-- Effect sizes cost the same as each other. A six-point sweep is six times the table above
-  (~5,100 CPU-h), but the 2,900-task QOS budget still allows one wave: 480 splits × 6 effect sizes
-  = 2,880 tasks, ~1h50m each, so ~2 h wall clock.
+- Effect sizes cost the same as each other. At the current 635 CPU-h a six-point sweep is
+  **~3,800 CPU-h** (it was ~5,100 before the gRNA reuse), and the 2,900-task QOS budget still allows
+  one wave: 480 splits × 6 effect sizes = 2,880 tasks, ~75 min each, so ~1.5 h wall clock.
 
 ---
 
@@ -567,9 +567,35 @@ the null-model question above.
    [Choosing num_replicates]({{ site.baseurl }}{% link choosing-num-replicates.md %}) but not
    orchestrated. The scripts already support it through `--rep-offset`.
 
-### Step 9 — batch gene-disjoint targets into one sceptre call
+### Step 9 — batch gene-disjoint targets into one sceptre call — **RETIRED, do not build this**
 
-Not started, and the largest single saving left on the table: **up to 1.8×**, worth about 370
+**The gRNA precomputation reuse already collected most of what this was for, by a different
+mechanism.** Step 9 amortises the per-call setup by putting many targets in one call; the patch
+eliminated the dominant *component* of that setup outright, by caching the fit instead. Refitting the
+cost model on `38887744` shows what is left:
+
+| | Per target | Per pair | Per-target term | Step 9 ceiling |
+|---|---:|---:|---:|---:|
+| `as_is` (job `38849611`) | 5.076s | 0.5923s | 427 CPU-h (42.6 %) | 1.63× |
+| **`null_fit` + gRNA reuse** (`38887744`) | **1.140s** | **0.5561s** | **96 CPU-h (15.1 %)** | **1.16×** |
+
+Batching 302,600 calls into ~30,000 would leave ~10 CPU-h of per-target overhead, so it now saves
+about **86 CPU-h per effect size out of 635** — against the ~385 it promised. That is not worth a
+refactor that touches seeding, splitting and the target loop, and whose two open risks were never
+resolved: a 194-gene batch needs ~0.9 GB for the count matrix and as much again for the effect-size
+matrix against ~54 MB per target today, and sceptre's per-call cost was only ever shown linear over
+5–36 pairs, not the 194 a batch would carry.
+
+The per-pair term is now **85 % of the bill**, and Step 9 explicitly does not move it — a gene is
+still simulated once for every target it pairs with. Any further optimisation has to attack per-pair
+work, not per-call setup.
+
+The reasoning below is kept because the analysis is still correct and the batching argument is
+reusable if the per-target term ever grows back.
+
+---
+
+Originally: the largest single saving left on the table, **up to 1.8×**, worth about 370
 CPU-hours per effect size. Costed below because the reasoning is easy to get wrong in both
 directions.
 
@@ -1138,10 +1164,12 @@ negative claims are essentially never assertable at 100 replicates and a 15 % kn
   replicates buy a precise estimate of a number that is 0. Sweeping 5 % at 30 reps and spending
   the difference on 20–25 % would carry more information. Untested.
 - **`--target-overhead` in `split_pairs.R`: closed, and the answer is "leave it".** It defaults to 0,
-  so every split ever produced — including the ones the `null_fit` rerun (`38882207`) will use — is
-  balanced on pair count alone. The array does fix the right value (5.076s per target against
-  0.5923s per pair ⇒ **≈ 8.6 pair-equivalents**), but setting it buys almost nothing at
-  `N_SPLITS=1000`, and the reason this document previously gave for setting it was wrong.
+  so every split is balanced on pair count alone. The `as_is` array fixed the right value at the time
+  (5.076s per target against 0.5923s per pair ⇒ ≈ 8.6 pair-equivalents), but setting it bought almost
+  nothing at `N_SPLITS=1000`, and the reason this document previously gave for setting it was wrong.
+  **The gRNA reuse has since made it moot**: at 1.140s per target against 0.5561s per pair the right
+  value is **≈ 2.0 pair-equivalents**, on splits that already hold 34–36 pairs. There is nothing left
+  to correct for.
 
   Measured on the real splits, and on job `38849611`'s own `sacct` record:
 

@@ -78,7 +78,7 @@ LOG_DIR="${REPO_ROOT}/logs/refactor"
 #
 #   EFFECT_SIZES=(0.05 0.10 0.15 0.20 0.25 0.30 0.35 0.40 0.45 0.50)
 #
-# Adding effect sizes costs CPU linearly (~320 CPU-hours each) but need not cost wall clock --
+# Adding effect sizes costs CPU linearly (~635 CPU-hours each) but need not cost wall clock --
 # see the N_SPLITS budget below, which trades splits against effect sizes to keep everything in
 # one wave.
 EFFECT_SIZES=(0.15)
@@ -127,17 +127,19 @@ NULL_FIT_SUBSET_SPLITS=20
 # Because ~all tasks run concurrently, wall clock is roughly one task's duration regardless of
 # how the budget is divided -- so spend it.
 #
-# MEASURED cost, from the step 3 smoke test on this cluster: 9.68 s per target per replicate
-# (36 targets timed; range 5.2-22.2 s, scaling sub-linearly with pairs per target). Over 3,026
-# targets at 100 replicates that is ~814 CPU-hours per effect size, against the old pipeline's
-# 1,308 -- a 1.6x speedup, not the 4x that docs/status.md's laptop figure of 295 CPU-hours
-# implied. The per-call cost here is roughly twice what that document recorded.
+# MEASURED cost, fitted on all 999 real tasks of job 38887744 (null_fit + gRNA precomputation
+# reuse): 1.140 s per target + 0.5561 s per pair, per replicate. Over 3,026 targets and 34,886
+# pairs at 100 replicates that is 635 CPU-hours per effect size predicted against 634 measured,
+# down from 999 before the gRNA reuse and against the old pipeline's 1,308 -- a 2.1x speedup.
+#
+# Do not re-derive this from the step 3 smoke test. That gave 9.68 s per target per replicate and
+# implied ~814 CPU-hours; it was measured before the gRNA reuse and on 36 targets.
 #
 #   effect sizes   N_SPLITS   tasks   per task    wall clock (all effect sizes)
-#   1              1000       1000    ~49 min     ~50 min
-#   1              2000       2000    ~24 min     ~25 min
-#   2              1400       2800    ~35 min     ~35 min
-#   10             290        2900    ~168 min    ~2.8 h      (8,100 CPU-hours!)
+#   1              1000       1000    ~36 min     ~40 min
+#   1              2000       2000    ~18 min     ~20 min
+#   2              1400       2800    ~26 min     ~30 min
+#   10             290        2900    ~131 min    ~2.2 h      (6,350 CPU-hours!)
 #
 # Rule of thumb: N_SPLITS ~= MAX_ARRAY_TASKS / number of effect sizes. And note the last row:
 # a full 5-50% sweep is 8,000+ CPU-hours simulated naively. See docs/status.md on two-stage
