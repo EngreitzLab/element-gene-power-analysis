@@ -856,10 +856,49 @@ from `(seed, target, rep, effect_size)` so results remain invariant to the batch
 they are invariant to the split layout today — that invariance is also what makes the two designs
 directly comparable pair by pair.
 
-### Step 10 — re-derive the environment
+### Step 10 — re-derive the environment — **DONE**
 
-The dependency list was written before the code was finished. Re-audit the finished scripts'
-`library()` and `::` calls and trim `pixi.toml` to match.
+Audited 2026-08-14. The list was in better shape than expected: one package was in the wrong
+environment, and nothing else needed to change.
+
+**Our own code** uses only `Matrix`, `sceptre` and `optparse` via `library()`, plus `stats`,
+`utils`, `methods`, `tools` and `testthat` via `::`. Everything else in `pixi.toml` is there for
+sceptre's benefit, which is where the real question was.
+
+**`r-bh` moved to the build environment.** sceptre declares `LinkingTo: Rcpp, BH` — header-only
+Boost, used to compile the C++ and never loaded at runtime. It had been sitting in the runtime
+environment that every Nextflow task activates, under a comment describing it as a "NAMESPACE
+import", which it is not: sceptre's NAMESPACE imports only `Matrix` and `Rcpp`. That wrong comment
+is presumably how it got there.
+
+`src/audit_dependencies.R` is the tool that settled it, and it separates three things that get
+conflated:
+
+| | Meaning | For sceptre 0.99.0 |
+|---|---|---|
+| NAMESPACE imports | loaded on every `library()` call, unconditional | `Matrix`, `Rcpp` |
+| `::` references | loaded only if that line executes | 15 packages, incl. `dplyr`, `data.table`, `purrr`, `crayon`, `parallelly`, `withr` |
+| `LinkingTo` | compile-time headers, never loaded | `Rcpp`, `BH` |
+
+`BH` was the only declared dependency with no reference anywhere in the package's code. Everything
+else earns its place, so the rest of the runtime list stands as documented in `pixi.toml`.
+
+What the audit **cannot** tell you is which of those 15 `::` references lie on *our* path
+specifically — that needs coverage instrumentation. It narrows the question to a list short enough
+to reason about, and the synthetic object now makes a candidate removal cheap to test by running
+the whole pipeline without the package.
+
+**The re-solve was a no-op apart from the intended change** (job `39034832`): four lines removed
+from `pixi.lock`, no package added, removed or moved version. `r-base` stayed at
+`4.4.3-h35b0bb1_11`. Verified afterwards by job `39037197`, which rebuilt the synthetic object and
+ran all six pipeline steps against the new environment — if `BH` were needed at runtime, sceptre
+would not load at all.
+
+**A caveat that outlived this step.** Nearly every spec in `[dependencies]` is `"*"`, so the
+lockfile is the only thing pinning versions and any re-solve is a gamble on what conda-forge has
+published since. This one happened to come back clean; the next one may not. Pinning the specs to
+their locked versions would make future re-solves honest, and is worth doing before the next
+dependency change rather than during one.
 
 ### Step 11 — fit the power curve and run three effect sizes instead of six
 

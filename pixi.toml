@@ -29,7 +29,6 @@ nextflow = "*"        # pipeline runner (the only package from bioconda)
 # --- reached by the sceptre functions we call (run_discovery_analysis, get_result,
 #     import_data, set_analysis_parameters, assign_grnas, run_qc) --------------------
 r-matrix = "*"        # sceptre NAMESPACE import; also used directly by our scripts
-r-bh = "*"            # sceptre NAMESPACE import
 r-rcpp = ">=1.0.9"    # sceptre NAMESPACE import
 r-dplyr = "*"         # s4_analysis_functs_*, pairwise_qc_functs, import_functs, assign_grna_functions
 # quoted: an unquoted r-data.table would parse as the dotted TOML key r-data.table
@@ -78,6 +77,12 @@ r-withr = "*"
 r-remotes = "*"
 c-compiler = "*"
 cxx-compiler = "*"
+# Header-only Boost. sceptre declares `LinkingTo: Rcpp, BH`, so BH is used to *compile* the C++ and
+# is never loaded at runtime -- confirmed by src/audit_dependencies.R, which finds it the only
+# declared dependency with no reference anywhere in the package's code. It sat in the runtime
+# environment until 2026-08-14 under a comment calling it a "NAMESPACE import", which it is not:
+# sceptre's NAMESPACE imports only Matrix and Rcpp.
+r-bh = "*"
 r-ggplot2 = "*"
 r-cowplot = "*"
 r-scales = "*"
