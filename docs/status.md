@@ -19,13 +19,13 @@ carries a **local patch** that reuses the gRNA precomputation across replicates.
 flight as of 2026-08-13 afternoon: the null-model array `38879935` is running, its merge `38879939`
 and the `null_fit` rerun of the simulation `38882207` are queued behind it.
 
-Still missing: Nextflow (Step 7), a test suite (Step 8), and the old-vs-new comparison, which is
-scripted in `workflow/compare_old_new.R`. The comparison is now
-straightforward because the reference sample `day0_grna20_no_shuffle` was produced by the old
-pipeline with the size-factor shuffle already removed, so only the RNG stream differs between the two
-implementations — see the note in `bin/lib/simulate.R`. Two equivalence checks have since removed the
-other confounders: the version bump and the gRNA patch each provably change no number (Steps 10 and
-11, below).
+**The old-vs-new comparison has now run and passed** (job `38916341`) — the refactored pipeline
+agrees with the old one on every check, including a zero difference in perturbed cells per pair
+across all 34,886 pairs. See Comparison 1 below. Two equivalence checks had already removed the other
+confounders: the version bump and the gRNA patch each provably change no number.
+
+Still missing: Nextflow (Step 7) and a test suite (Step 8). Step 9 has been **retired** — the gRNA
+precomputation reuse already collected most of what it was for.
 
 ---
 
@@ -562,7 +562,7 @@ the null-model question above.
    against known values, `build_dispersion_vector` erroring on a missing gene, `effect_label`
    across `0.15 / 0.2 / 0.5 / 0.125`.
 2. **Synthetic test data generator** (`bin/make_test_data.R`) so CI can run without lab data.
-3. **Old-vs-new comparison** — the main outstanding item; see below.
+3. ~~**Old-vs-new comparison**~~ — **done and passed**, job `38916341`; see Comparison 1 below.
 4. **Two-stage replicate allocation** — documented in
    [Choosing num_replicates]({{ site.baseurl }}{% link choosing-num-replicates.md %}) but not
    orchestrated. The scripts already support it through `--rep-offset`.
@@ -1010,9 +1010,47 @@ pixi run Rscript bin/summarize_power.R \
 Expect roughly an hour per array task at 10 targets × 100 replicates × 2 effect sizes. Time limit is
 set to 3h for headroom — per-target cost varies about 1.5× with pair count.
 
-### Comparison 1 — old vs new pipeline (the important one)
+### Comparison 1 — old vs new pipeline — **DONE, PASSED** (job `38916341`, 2026-08-13)
 
-**Why it is outstanding:** the upstream statistics are proven bit-identical (size factors, normalised
+**The refactor is validated.** The old pipeline's 2026-05-14 output was still on disk
+(`results/day0_grna20_no_shuffle/power_analysis/power_analysis_results_es_0.15.tsv`, 34,886 pairs),
+so the old environment never had to be rebuilt — which retires the CentOS 7 / pinned-`linux-64`-solve
+risk described below. `old_vs_as_is` is the gating comparison, because the old pipeline inherits the
+same real-data cache `as_is` does; comparing it against `null_fit` would fold in a deliberate change
+of null model.
+
+| Check | Result | |
+|---|---|---|
+| 1. Pair sets | identical, 34,886 shared, 0 either side | PASS |
+| 2. Perturbed cells per pair | **0 of 34,886 differ, max abs difference 0** | PASS |
+| 3. Mean power | 0.59293 → 0.59326, **+0.00032 = 1.37 σ** | PASS |
+| 4. Paired sign test | 13,823 up / 13,642 down / 7,421 tied, **p = 0.28** | PASS |
+| 5. Per-pair agreement | **Pearson r = 0.99299**, mean abs 0.0304, median 0.02, max 0.26 | PASS |
+| 6. Old estimate inside new Wilson interval | 81.2 % coverage | informational |
+
+**Check 2 is the strongest of these and is easy to skim past.** Perturbed cells per pair is
+RNG-independent, so a zero difference across all 34,886 pairs proves the two implementations select
+identical cells for identical pairs — the entire upstream path is bit-identical, and only the
+simulation's RNG stream differs. Checks 3–5 are then about Monte-Carlo agreement alone.
+
+Check 5's mean absolute difference of 0.0304 is not a discrepancy: at 100 replicates a single power
+estimate carries a standard error up to 0.05, and both sides carry one, so per-pair scatter of this
+size is what agreement looks like. What would have been alarming is a *directional* offset, and
+check 4 finds none — 13,823 against 13,642 is as close to a coin flip as this many pairs allow.
+
+**The `old_vs_null_fit` comparison "fails" check 3, and that is the correct behaviour.** Mean power
+differs by 0.0066 = 28.1 σ. That is not a refactor problem — it is the deliberate null-model change,
+re-measured independently: `null_fit − as_is` was +0.0063 measured directly, `null_fit − old` is
++0.0066, and `as_is − old` is +0.0003. The three are additive and consistent, which is a useful
+triangulation. Check 3 tests "is this the same estimator?" against the Monte-Carlo SE of a mean over
+34,886 pairs (0.00024), so any real systematic shift blows through it however small. It is reported
+and does not gate.
+
+Reports: `results/refactor/comparison/old_vs_as_is/` and `.../old_vs_null_fit/`.
+
+---
+
+**Why it was outstanding:** the upstream statistics are proven bit-identical (size factors, normalised
 means, raw means: max absolute difference exactly 0), and dropping `@grna_matrix` was proven to leave
 discovery results unchanged. What has *not* been checked is the simulation itself, because seeding
 moved inside the replicate loop, which changes the RNG stream. So the comparison has to be
