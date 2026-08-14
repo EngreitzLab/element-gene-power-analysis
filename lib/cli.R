@@ -14,7 +14,8 @@ suppressPackageStartupMessages(library(optparse))
 
 #' Directory containing the running script, so lib/ can be sourced by a relative path.
 #'
-#' Works both when invoked as `Rscript bin/foo.R` and when Nextflow stages bin/ onto PATH.
+#' Works both when invoked as `Rscript src/foo.R` and when a workflow engine stages the scripts
+#' somewhere else.
 this_script_dir <- function() {
   args <- commandArgs(trailingOnly = FALSE)
   file_arg <- grep("^--file=", args, value = TRUE)
@@ -25,15 +26,35 @@ this_script_dir <- function() {
   normalizePath(".")
 }
 
-#' Source one or more files from bin/lib/.
+#' Candidate locations for lib/, most specific first.
+#'
+#' The repo layout is `src/<script>.R` with `lib/` at the root, so the usual answer is one level up
+#' from the script. Two other shapes have to keep working: a workflow engine that stages every input
+#' into a single flat task directory (Nextflow does this), which puts lib/ beside the script or
+#' dissolves it entirely; and being run from the repo root with no `--file=`, where
+#' `this_script_dir()` is the working directory.
+lib_dirs <- function() {
+  here <- this_script_dir()
+  unique(c(file.path(dirname(here), "lib"), file.path(here, "lib"), here))
+}
+
+#' Source one or more files from lib/.
 source_lib <- function(...) {
-  lib_dir <- file.path(this_script_dir(), "lib")
+  dirs <- lib_dirs()
   for (file in c(...)) {
-    path <- file.path(lib_dir, file)
-    if (!file.exists(path)) {
-      stop("Cannot find library file: ", path, call. = FALSE)
+    found <- FALSE
+    for (dir in dirs) {
+      path <- file.path(dir, file)
+      if (file.exists(path)) {
+        source(path)
+        found <- TRUE
+        break
+      }
     }
-    source(path)
+    if (!found) {
+      stop("Cannot find library file ", file, " in any of: ",
+           paste(dirs, collapse = ", "), call. = FALSE)
+    }
   }
   invisible(TRUE)
 }

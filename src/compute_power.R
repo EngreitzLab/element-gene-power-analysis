@@ -31,12 +31,21 @@
 local({
   args <- commandArgs(trailingOnly = FALSE)
   file_arg <- grep("^--file=", args, value = TRUE)
-  lib <- if (length(file_arg) == 1) {
-    file.path(dirname(dirname(normalizePath(sub("^--file=", "", file_arg)))), "lib")
+  here <- if (length(file_arg) == 1) {
+    dirname(normalizePath(sub("^--file=", "", file_arg)))
   } else {
-    "lib"
+    normalizePath(".")
   }
-  source(file.path(lib, "cli.R"))
+  # lib/ sits one level up from src/, but a workflow engine that stages every input into one flat
+  # task directory collapses that, so look beside the script and in it as well. Kept in step with
+  # lib_dirs() in cli.R, which resolves the rest of the library the same way.
+  for (dir in unique(c(file.path(dirname(here), "lib"), file.path(here, "lib"), here))) {
+    if (file.exists(file.path(dir, "cli.R"))) {
+      source(file.path(dir, "cli.R"))
+      return(invisible(NULL))
+    }
+  }
+  stop("Cannot find lib/cli.R relative to ", here, call. = FALSE)
 })
 
 ## ARGUMENTS =======================================================================================
