@@ -1,24 +1,40 @@
 # Parameters for the element-gene power analysis.
 # Full descriptions: https://engreitzlab.github.io/element-gene-power-analysis/
+#
+# This file is read directly by Nextflow (`-params-file config/config.yml`) and mirrored by hand in
+# workflow/slurm_executor/config.sh, which cannot parse YAML in bash without more fragility than it
+# is worth. If you change a value here, change it there too -- the two runners disagreeing about
+# what a run means is exactly the kind of bug this pipeline has already been bitten by.
 
 # CSV with one row per sample: sample,sceptre_object
 samplesheet: assets/samplesheet.csv
-outdir: results
+outdir: results/nextflow
 
 # Fractional decrease in expression (0.15 = 15% knockdown).
+#
+# Only 0.15 is listed because it is the only effect size the old pipeline covers, so it is the only
+# one that can be validated against. A production sweep is 5% to 50%; at the measured 635 CPU-hours
+# per effect size, a six-point sweep is ~3,800 CPU-hours.
 effect_sizes:
   - 0.15
-  - 0.2
 
 # Monte-Carlo replicates per element-gene pair.
+#
+# 100 is the floor for the question this is for. Certifying "power was at least 0.8" needs 88/100
+# successes, so power_ci_low is what gets thresholded, not power -- see
+# docs/choosing-num-replicates.md.
 num_replicates: 100
 
 # Spread of per-gRNA effect sizes around the target effect size.
 guide_sd: 0.13
 
-# Parallelisation only; does not affect results.
-n_splits: 280
-reps_per_chunk: 100
+# Parallelisation only; does not affect results. Seeds derive from
+# (seed, target, rep, effect_size), so output is invariant to the split layout.
+n_splits: 1000
+
+# Replicates per null-model task (step 02b). One fit covers every gene on one replicate in ~20
+# minutes, so 1 per task keeps the whole set at ~20 minutes rather than ~33 hours serial.
+reps_per_null_chunk: 1
 
 # Base RNG seed.
 seed: 20250812
@@ -30,5 +46,5 @@ conf_level: 0.95
 
 # Optional, unset by default.
 # alpha: 0.05                 # p-value threshold; otherwise derived from the sceptre object
-# n_control_cells: 5000       # sample controls rather than using all; reduces power
+# n_control_cells: 5000       # sample controls rather than using all; costs 21-60% of power
 # cell_batches: batch_factor  # covariate to stratify control sampling by
