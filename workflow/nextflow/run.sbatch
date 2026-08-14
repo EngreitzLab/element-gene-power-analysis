@@ -17,12 +17,17 @@
 # as long as the pipeline, hence 2 days against 8 GB.
 #
 # Usage:
-#   sbatch workflow/nextflow/run.sbatch                        # full run
-#   sbatch workflow/nextflow/run.sbatch -profile sherlock,test # the fast path
-#   sbatch workflow/nextflow/run.sbatch -resume                # pick up where a run stopped
+#   sbatch workflow/nextflow/run.sbatch                                  # full run
+#   PARAMS_FILE=config/test.yml sbatch workflow/nextflow/run.sbatch      # the fast path
+#   sbatch workflow/nextflow/run.sbatch -resume                          # pick up where it stopped
 #
 # Anything passed on the command line is appended to the `nextflow run` invocation, so -resume,
 # -entry, --n_splits 100 and friends all work.
+#
+# The test settings live in a params file, not a profile: Nextflow gives -params-file precedence
+# over profile params, and this script always passes one, so a `-profile test` would have been
+# silently overridden by config/config.yml and produced a full-size run. Profiles choose where a run
+# executes; params files choose what it runs.
 
 set -euo pipefail
 
@@ -66,9 +71,16 @@ if [[ ! " $* " =~ " -profile " ]]; then
   PROFILE_ARGS=(-profile sherlock)
 fi
 
+PARAMS_FILE="${PARAMS_FILE:-config/config.yml}"
+if [[ ! -s "${PARAMS_FILE}" ]]; then
+  echo "ERROR: params file not found: ${PARAMS_FILE}" >&2
+  exit 1
+fi
+echo "  params:   ${PARAMS_FILE}"
+
 nextflow run "${REPO_ROOT}" \
     "${PROFILE_ARGS[@]}" \
-    -params-file config/config.yml \
+    -params-file "${PARAMS_FILE}" \
     -ansi-log false \
     "$@"
 

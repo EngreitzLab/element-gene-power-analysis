@@ -1,0 +1,34 @@
+# Smallest run that still exercises the real code path.
+#
+# Not a unit test: it runs the actual sceptre calls on the real object, just few enough of them to
+# finish in minutes. Same shape as workflow/slurm_executor/03_smoke_simulation.sbatch, which is what
+# it is calibrated against.
+#
+#   PARAMS_FILE=config/test.yml sbatch workflow/nextflow/run.sbatch
+#
+# This is a params file rather than a `-profile test`, deliberately. Nextflow gives -params-file
+# precedence over profile params, and the driver always passes one -- so test settings expressed as
+# a profile were silently overridden by config/config.yml, and a "test" run quietly used production
+# values. Profiles select where a run executes; params files select what it runs.
+
+samplesheet: assets/samplesheet.csv
+outdir: results/nextflow_test
+
+effect_sizes:
+  - 0.15
+
+num_replicates: 2
+guide_sd: 0.13
+seed: 20250812
+
+# Split as production does, then simulate only the first few, so the split geometry is identical to
+# a real run rather than a special case.
+n_splits: 1000
+test_max_splits: 3
+
+reps_per_chunk: 2
+reps_per_null_chunk: 2
+test_max_null_reps: 2
+
+power_threshold: 0.8
+conf_level: 0.95
