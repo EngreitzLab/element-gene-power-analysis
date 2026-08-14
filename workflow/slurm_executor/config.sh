@@ -59,6 +59,7 @@ POWER_DIR="${OUTDIR}/power_${NULL_MODEL_CONFIG}"
 # much the inherited cache moved real numbers at 100 replicates. Step 09 compares against it, so it
 # is named explicitly rather than reached through SIM_DIR, which now follows NULL_MODEL_CONFIG.
 AS_IS_SIM_DIR="${OUTDIR}/sim_as_is"
+AS_IS_POWER_DIR="${OUTDIR}/power_as_is"
 
 # Per-replicate null models (step 02b), and the null_fit validation subset (steps 08-09). The
 # subset writes to its own tree so it can never be mistaken for, or concatenated with, either the
