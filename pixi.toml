@@ -91,7 +91,7 @@ dev = ["dev"]
 
 [tasks]
 check-api = { cmd = "Rscript src/check_sceptre_api.R", description = "Verify the pinned sceptre exposes every internal slot the pipeline depends on" }
-pipeline-test = { cmd = "nextflow run . -profile test,local", description = "End-to-end run on synthetic data" }
+pipeline-test = { cmd = "nextflow run . -profile stub -params-file config/test.yml -stub-run", description = "Check the Nextflow DAG wiring without running anything" }
 install-hooks = { cmd = "git config core.hooksPath .githooks && echo 'core.hooksPath -> .githooks'", description = "Enable the repository pre-commit hook" }
 lint = { cmd = "./.githooks/pre-commit --all", description = "Run the pre-commit checks across every tracked file" }
 
@@ -101,4 +101,4 @@ lint = { cmd = "./.githooks/pre-commit --all", description = "Run the pre-commit
 setup = { cmd = "Rscript src/install_sceptre.R", description = "Install sceptre from the pinned commit into .pixi/rlibs" }
 
 [feature.dev.tasks]
-test = { cmd = "Rscript -e 'testthat::test_dir(\"tests\")'", description = "Run unit tests" }
+test = { cmd = "Rscript -e 'testthat::test_dir(\"tests/testthat\")'", description = "Run unit tests" }

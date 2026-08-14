@@ -33,6 +33,8 @@ local({
   stop("Cannot find lib/cli.R relative to ", here, call. = FALSE)
 })
 
+source_lib("stats.R")
+
 ## ARGUMENTS =======================================================================================
 
 option_list <- list(
@@ -83,23 +85,6 @@ tables <- tables[ordering]
 effect_sizes <- effect_sizes[ordering]
 log_step("Merging ", length(tables), " effect size(s): ", paste(effect_sizes, collapse = ", "))
 
-#' Column suffix for an effect size, as a percentage: 0.15 -> "15", giving the column name
-#' power_at_effect_size_15.
-#'
-#' Trailing zeros are trimmed only *after a decimal point*, so 0.125 -> "12.5" rather than
-#' "12.50". Trimming unconditionally is wrong and quietly so: it would turn 0.2 into "2" and 0.5
-#' into "5", i.e. a column called power_at_effect_size_2 for a 20 % knockdown.
-#'
-#' The decimal point then becomes an underscore (12.5 -> "12_5") to keep every column name
-#' snake_case and free of dots, which several downstream readers treat as name separators.
-effect_label <- function(effect_size) {
-  formatted <- format(effect_size * 100, trim = TRUE, scientific = FALSE)
-  if (grepl(".", formatted, fixed = TRUE)) {
-    formatted <- sub("0+$", "", formatted)
-    formatted <- sub("\\.$", "", formatted)
-  }
-  gsub(".", "_", formatted, fixed = TRUE)
-}
 
 ## MERGE ===========================================================================================
 

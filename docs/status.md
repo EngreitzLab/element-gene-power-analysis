@@ -59,7 +59,7 @@ lives on the **`legacy`** branch. Anything referring to `bin/` predates this.
 | Per-task RAM | 1,774 MB+ | ~250 MB | `object.size` / peak heap |
 | Dead code | — | **694 lines removed** | 6 files, none reachable |
 | Split imbalance | 1.18× | **1.000** | measured on 2,798 targets |
-| Reproducibility | none | seeded and layout-invariant | identical p-values across 1×4 vs 2×2 replicate chunks, and across split layouts |
+| Reproducibility | none | seeded and layout-invariant | identical p-values across 1×4 vs 2×2 replicate chunks, and across split layouts. **On the same hardware** — see the note below |
 | Environment | 273-line pinned linux-64 conda | 11 direct specs, 2 platforms | `pixi.lock` solves for `linux-64` + `osx-arm64` |
 
 ### Correctness fixes
@@ -643,13 +643,63 @@ on that key, so all ~147 pairs of a gene share one `@response_precomputations` e
 serving 147 tests. That is the same insight as Step 9 (pool more pairs per call) and it is what led to
 the null-model question above.
 
+### Reproducibility is bitwise on one node, not across the cluster
+
+Found on 2026-08-14 while checking the Nextflow runner against the sbatch one on the same three
+splits, at the same seed. Two of the three splits came out **byte-identical**. The third did not:
+
+| | |
+|---|---|
+| Rows compared | 72 |
+| `fold_change` differing | 7, max relative **1.2 × 10⁻¹⁵** (~5 ulps) |
+| `p_value` differing by >10⁻⁶ relative | **4**, all at p < 10⁻²⁵ |
+| Largest single difference | 2.1 × 10⁻⁸¹ against 9.2 × 10⁻⁸⁰ |
+| **Replicates changing significance** | **0** |
+
+This is not a different RNG stream — that would perturb every row, not four of seventy-two. It is
+last-bit floating-point difference between CPU generations (this cluster spans six; see the node
+table under Open questions), amplified by sceptre's skew-normal tail approximation, which is very
+sensitive in the far tail and nowhere else. A p-value of 10⁻⁸¹ is zero for every purpose the
+pipeline has.
+
+**What the seeding guarantees is the random draws, not the arithmetic.** So:
+
+- The same seed on the same node type reproduces a run bit for bit.
+- Across node types, expect agreement to ~15 significant figures on estimates, and agreement on
+  every significance call — which is what power is computed from, and therefore what matters.
+- Do not write a test, a comparison or an acceptance criterion that demands byte-identity of
+  simulation output. `workflow/nextflow/verify_against_sbatch.sbatch` compares numerically and
+  asserts zero significance flips, which is the correct bar; an earlier version demanded
+  byte-identity and failed on hardware rather than on the pipeline.
+
 ### Step 8 — tests and comparisons
 
-1. **Unit tests** (`testthat`, `pixi run test`) for the pure functions: `center_effect_size_matrix`
-   centring, `create_effect_size_matrix` shape, split binning conservation, `wilson_interval`
-   against known values, `build_dispersion_vector` erroring on a missing gene, `effect_label`
-   across `0.15 / 0.2 / 0.5 / 0.125`.
-2. **Synthetic test data generator** (`src/make_test_data.R`) so CI can run without lab data.
+1. ~~**Unit tests**~~ — **done**: 62 tests in `tests/testthat/`, run with `pixi run test` or
+   `sbatch workflow/slurm_executor/12_unit_tests.sbatch` (R does not belong on a login node). They
+   cover the pure functions only — no sceptre, no lab data, no cluster — and every one of them
+   corresponds to an entry under "Correctness fixes" above:
+
+   | File | Covers |
+   |---|---|
+   | `test-stats.R` | `wilson_interval` against published values and at both boundaries, where the normal approximation collapses; `effect_label` pinning the `0.2 → "2"` bug |
+   | `test-simulate.R` | `center_effect_size_matrix` putting each gene's perturbed mean on its target; `create_effect_size_matrix` orientation and clamping; `build_dispersion_vector` erroring rather than recycling |
+   | `test-seeding.R` | `derive_seed` separating every key component, and being invariant to how replicates are chunked — the property that makes `--n-splits` a purely computational knob |
+
+   Two of these tests failed on first run **because the tests were wrong, not the code**: the
+   effect-size matrix is genes × cells, not cells × genes (`run_power_simulation.R:314` reorders
+   *columns* by cell), and `init_seed` logs its seed deliberately. Both were corrected against the
+   actual contract rather than by loosening the assertion — a test encoding a wrong assumption is
+   worse than no test, and the transposed one would have passed a genuinely broken implementation.
+
+   `wilson_interval` and `effect_label` moved to `lib/stats.R` to make this possible; they were
+   defined inside `compute_power.R` and `summarize_power.R`, where testing them meant invoking a
+   command line.
+
+   Not covered yet: split binning conservation, which is enforced in `SPLIT_PAIRS` and
+   `02_split_pairs.sbatch` at runtime rather than by a unit test.
+2. **Synthetic test data generator** (`src/make_test_data.R`) so CI can run without lab data. Not
+   started, and the last thing standing between this repo and CI that means anything: every test
+   above is a pure-function test, and nothing exercises the sceptre path without the 448 MB object.
 3. ~~**Old-vs-new comparison**~~ — **done and passed**, job `38916341`; see Comparison 1 below.
 4. **Two-stage replicate allocation** — documented in
    [Choosing num_replicates]({{ site.baseurl }}{% link choosing-num-replicates.md %}) but not

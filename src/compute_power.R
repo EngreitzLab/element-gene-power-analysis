@@ -48,6 +48,8 @@ local({
   stop("Cannot find lib/cli.R relative to ", here, call. = FALSE)
 })
 
+source_lib("stats.R")
+
 ## ARGUMENTS =======================================================================================
 
 option_list <- list(
@@ -95,26 +97,6 @@ if (!is.finite(threshold) || threshold <= 0 || threshold > 1) {
   stop("The p-value threshold (", threshold, ") is not a usable probability. ",
        "A non-finite value usually means the source discovery results contained no significant ",
        "pair; pass --alpha to set the threshold explicitly.", call. = FALSE)
-}
-
-## WILSON INTERVAL =================================================================================
-
-#' Wilson score interval for a binomial proportion.
-#'
-#' Preferred over the normal approximation `p +/- z*sqrt(p(1-p)/n)` because these estimates live at
-#' the boundaries, where that approximation degenerates: 0 successes out of 100 gives the interval
-#' [0, 0], asserting the power is certainly zero. Wilson gives [0, 0.037], which is what 100
-#' replicates without a success actually supports.
-wilson_interval <- function(successes, n, conf_level = 0.95) {
-  z <- stats::qnorm(1 - (1 - conf_level) / 2)
-  phat <- successes / n
-  denom <- 1 + z^2 / n
-  center <- (phat + z^2 / (2 * n)) / denom
-  halfwidth <- (z / denom) * sqrt(phat * (1 - phat) / n + z^2 / (4 * n^2))
-  list(
-    low = pmax(0, center - halfwidth),
-    high = pmin(1, center + halfwidth)
-  )
 }
 
 ## LOAD ============================================================================================
