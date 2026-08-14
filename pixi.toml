@@ -23,7 +23,7 @@ SCEPTRE_SHA = "3ba046b86f33e99dee633fbb8704ee8defdb442d"
 # copying its DESCRIPTION.
 [dependencies]
 r-base = "4.4.*"
-r-optparse = "*"      # CLI parsing for every bin/ script
+r-optparse = "*"      # CLI parsing for every src/ script
 nextflow = "*"        # pipeline runner (the only package from bioconda)
 
 # --- reached by the sceptre functions we call (run_discovery_analysis, get_result,
@@ -48,7 +48,7 @@ r-withr = "*"
 # as a container -- a per-gene table, a per-cell table, two sparse perturbation matrices,
 # and row/column subsetting. Nothing on the live code path touched rowRanges or any genomic
 # range (the only GRanges use was in filt_max_dist_pert(), part of the dead code removed in
-# Step 1), so bin/lib/sim_input.R replaces it with a plain list plus subset helpers. That
+# Step 1), so lib/sim_input.R replaces it with a plain list plus subset helpers. That
 # drops SingleCellExperiment, SummarizedExperiment, S4Vectors, GenomicRanges, IRanges,
 # GenomeInfoDb, GenomeInfoDbData, DelayedArray, MatrixGenerics, Biobase, BiocGenerics,
 # XVector, S4Arrays, SparseArray, abind and zlibbioc.
@@ -90,7 +90,7 @@ build = ["build"]
 dev = ["dev"]
 
 [tasks]
-check-api = { cmd = "Rscript bin/check_sceptre_api.R", description = "Verify the pinned sceptre exposes every internal slot the pipeline depends on" }
+check-api = { cmd = "Rscript src/check_sceptre_api.R", description = "Verify the pinned sceptre exposes every internal slot the pipeline depends on" }
 pipeline-test = { cmd = "nextflow run . -profile test,local", description = "End-to-end run on synthetic data" }
 install-hooks = { cmd = "git config core.hooksPath .githooks && echo 'core.hooksPath -> .githooks'", description = "Enable the repository pre-commit hook" }
 lint = { cmd = "./.githooks/pre-commit --all", description = "Run the pre-commit checks across every tracked file" }
@@ -98,7 +98,7 @@ lint = { cmd = "./.githooks/pre-commit --all", description = "Run the pre-commit
 # Scoped to the environments that carry the extra dependencies, so `pixi run setup`
 # resolves to the build environment without the caller having to name it.
 [feature.build.tasks]
-setup = { cmd = "Rscript bin/install_sceptre.R", description = "Install sceptre from the pinned commit into .pixi/rlibs" }
+setup = { cmd = "Rscript src/install_sceptre.R", description = "Install sceptre from the pinned commit into .pixi/rlibs" }
 
 [feature.dev.tasks]
 test = { cmd = "Rscript -e 'testthat::test_dir(\"tests\")'", description = "Run unit tests" }

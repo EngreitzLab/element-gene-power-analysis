@@ -41,7 +41,7 @@ path that `run_discovery_analysis()` goes through.
 
 The pipeline once used `SingleCellExperiment`, but only as a container — a per-gene table, a per-cell
 table, two sparse perturbation matrices, and subsetting. Nothing touched `rowRanges` or any genomic
-range. `bin/lib/sim_input.R` replaces it with a plain list, which removes sixteen Bioconductor
+range. `lib/sim_input.R` replaces it with a plain list, which removes sixteen Bioconductor
 packages and leaves `nextflow` as the only bioconda dependency.
 
 It also avoids a hard setup failure: `bioconductor-genomeinfodbdata` installs its data through a
@@ -60,13 +60,13 @@ reads the cached negative-binomial precomputations. None of that is a documented
 sceptre release could change it with no deprecation warning and the pipeline would keep running while
 producing wrong numbers.
 
-`bin/check_sceptre_api.R` is the guard. It asserts the presence of every slot the pipeline reads:
+`src/check_sceptre_api.R` is the guard. It asserts the presence of every slot the pipeline reads:
 
 `@response_matrix`, `@grna_matrix`, `@covariate_data_frame`, `@covariate_matrix`,
 `@grna_target_data_frame`, `@discovery_pairs_with_info`, `@initial_grna_assignment_list`,
 `@grna_assignments`, `@cells_in_use`, `@response_precomputations`, `@functs_called`
 
-Run it after any change to the pin. All slot access is confined to `bin/lib/sceptre_io.R`, so a
+Run it after any change to the pin. All slot access is confined to `lib/sceptre_io.R`, so a
 sceptre upgrade breaks one file rather than five.
 
 Two behaviours of sceptre worth knowing before touching the simulation:
@@ -80,7 +80,7 @@ Two behaviours of sceptre worth knowing before touching the simulation:
 ## sceptre is also patched
 
 The installed sceptre is the pinned commit **plus** the patches in `patches/`, applied by
-`bin/install_sceptre.R` before it compiles. Each patch adds an optional argument with a `NULL`
+`src/install_sceptre.R` before it compiles. Each patch adds an optional argument with a `NULL`
 default, so unpatched sceptre behaves identically and nothing in `patches/` changes any result.
 
 | Patch | What it adds |
@@ -112,16 +112,16 @@ the outputs byte for byte.
 
 Three things to know:
 
-- **The patches are part of the pin.** `bin/install_sceptre.R` refuses to install if `patches/` is
-  empty, and `bin/check_sceptre_api.R` asserts that `compute_grna_precomputations()` is exported and
+- **The patches are part of the pin.** `src/install_sceptre.R` refuses to install if `patches/` is
+  empty, and `src/check_sceptre_api.R` asserts that `compute_grna_precomputations()` is exported and
   that `run_discovery_analysis()` accepts `grna_precomputations`. Without that second check an
   unpatched sceptre would fail only once the simulation reached its first
   `run_discovery_analysis()` call, long after `prepare_sim_input.R` and `split_pairs.R` had run.
 - **Bumping `SCEPTRE_SHA` means regenerating the patches.** They are applied with no fuzz and no
-  offset search (`bin/lib/apply_patch.R`), so a hunk that no longer matches at the exact line it
+  offset search (`lib/apply_patch.R`), so a hunk that no longer matches at the exact line it
   claims is a hard error rather than a hunk relocated to somewhere it happens to fit.
 - **`patch(1)` is not used.** Everything runs inside a stock `ubuntu:22.04` container, which ships
-  neither `patch` nor `git`, so `bin/lib/apply_patch.R` applies the diff in R.
+  neither `patch` nor `git`, so `lib/apply_patch.R` applies the diff in R.
 
 Upstreaming these to Katsevich-Lab/sceptre is wanted but deliberately deferred. The plan is in
 `scalable-baking-key.md` (untracked) and is **not yet implemented upstream** — note it targets
@@ -131,8 +131,8 @@ starting point for that diff rather than the diff itself.
 ## Repository layout
 
 ```
-bin/                      standalone executables, one per pipeline step
-bin/lib/                  shared code, sourced by script-relative path
+src/                      standalone executables, one per pipeline step
+lib/                      shared code, sourced by a path relative to the calling script
   cli.R                   argument parsing, TSV I/O, seeding
   sim_input.R             the simulation-input container and its accessors
   pert_input.R            per-target cell selection
@@ -146,7 +146,7 @@ docs/                     this documentation (published to GitHub Pages)
 .githooks/pre-commit      formatting and convention checks
 ```
 
-`bin/lib/*.R` is sourced via a path resolved from `--file=` in `commandArgs()`, so every script works
+`lib/*.R` is sourced via a path resolved from `--file=` in `commandArgs()`, so every script works
 identically whether run directly or staged onto `PATH` by a workflow engine.
 
 ## Conventions, enforced by the hook

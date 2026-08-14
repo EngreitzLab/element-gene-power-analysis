@@ -32,7 +32,7 @@ local({
   lib <- if (length(file_arg) == 1) {
     file.path(dirname(dirname(normalizePath(sub("^--file=", "", file_arg)))), "bin", "lib")
   } else {
-    "bin/lib"
+    "lib"
   }
   source(file.path(lib, "cli.R"))
 })

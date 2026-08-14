@@ -163,7 +163,7 @@ power estimate. If `@discovery_result` turns out to be empty on this object,
 **After step 3** — the smoke job checks that every pair has exactly the requested number of
 replicates and that p-values are not uniformly `NA`. An all-`NA` p-value column is the signature
 of the simulated matrix reaching sceptre in the wrong class, which fails *silently* rather than
-erroring (see the class notes in `bin/lib/simulate.R`).
+erroring (see the class notes in `lib/simulate.R`).
 
 **After step 4** — step 5 refuses to run unless all 1000 split outputs are present, and names
 the missing ones.

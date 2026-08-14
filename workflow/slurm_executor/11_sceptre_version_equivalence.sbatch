@@ -75,7 +75,7 @@ container_run pixi run --frozen --environment build bash -c "
   SCEPTRE_SHA='${OLD_SHA}' \
   SCEPTRE_REF='v0.10.3' \
   SCEPTRE_PATCH_DIR='${EMPTY_PATCH_DIR}' \
-  Rscript bin/install_sceptre.R
+  Rscript src/install_sceptre.R
 "
 
 echo
@@ -96,7 +96,7 @@ run_under() {
   echo ">>> ${label}"
   local started=${SECONDS}
   container_run pixi run --frozen bash -c "
-    ${lib:+R_LIBS_USER='${lib}'} Rscript bin/run_power_simulation.R \
+    ${lib:+R_LIBS_USER='${lib}'} Rscript src/run_power_simulation.R \
       --sim-input '${PREPARED_DIR}/sim_input.rds' \
       --sceptre-template '${PREPARED_DIR}/sceptre_template.rds' \
       --pairs '${split}' \

@@ -73,7 +73,7 @@ if [[ -s "${out}" ]]; then
   exit 0
 fi
 
-pixi_run Rscript bin/run_power_simulation.R \
+pixi_run Rscript src/run_power_simulation.R \
   --sim-input "${PREPARED_DIR}/sim_input.rds" \
   --sceptre-template "${PREPARED_DIR}/sceptre_template.rds" \
   --pairs "${SPLIT}" \

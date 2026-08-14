@@ -124,7 +124,7 @@ if (!is.na(installed) && identical(installed_sha, sha) && !identical(installed_s
           "Reinstalling.")
 }
 
-source(file.path(project_root, "bin", "lib", "apply_patch.R"))
+source(file.path(project_root, "lib", "apply_patch.R"))
 
 message("Installing sceptre ", ref, " (", substr(sha, 1, 8), ") into ", lib, " ...")
 

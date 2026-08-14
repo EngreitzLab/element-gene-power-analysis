@@ -27,9 +27,9 @@ local({
   args <- commandArgs(trailingOnly = FALSE)
   file_arg <- grep("^--file=", args, value = TRUE)
   lib <- if (length(file_arg) == 1) {
-    file.path(dirname(normalizePath(sub("^--file=", "", file_arg))), "lib")
+    file.path(dirname(dirname(normalizePath(sub("^--file=", "", file_arg)))), "lib")
   } else {
-    "bin/lib"
+    "lib"
   }
   source(file.path(lib, "cli.R"))
 })

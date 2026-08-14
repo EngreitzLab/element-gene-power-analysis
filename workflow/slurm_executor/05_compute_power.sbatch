@@ -54,7 +54,7 @@ for es in "${EFFECT_SIZES[@]}"; do
   sim_list=$(ls "${sim_dir}"/split_*.tsv | paste -sd, -)
   out="${POWER_DIR}/power_es${es}.tsv"
 
-  pixi_run Rscript bin/compute_power.R \
+  pixi_run Rscript src/compute_power.R \
     --simulations "${sim_list}" \
     --threshold-file "${PREPARED_DIR}/discovery_threshold.txt" \
     --conf-level 0.95 \

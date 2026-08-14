@@ -40,7 +40,7 @@ if [[ "${n_chunks}" -ne "${n_expected}" ]]; then
   exit 1
 fi
 
-pixi_run Rscript bin/merge_null_models.R \
+pixi_run Rscript src/merge_null_models.R \
   --inputs "${NULL_MODELS_DIR}/chunk_*.rds" \
   --reps "${NUM_REPLICATES}" \
   --out "${NULL_MODELS}"

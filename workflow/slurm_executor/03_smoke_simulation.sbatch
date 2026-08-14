@@ -55,7 +55,7 @@ for i in $(seq 1 "${SMOKE_SPLITS}"); do
 
   echo
   echo ">>> smoke split ${i}/${SMOKE_SPLITS}: $(basename "${split}")"
-  pixi_run Rscript bin/run_power_simulation.R \
+  pixi_run Rscript src/run_power_simulation.R \
     --sim-input "${PREPARED_DIR}/sim_input.rds" \
     --sceptre-template "${PREPARED_DIR}/sceptre_template.rds" \
     --pairs "${split}" \
@@ -92,7 +92,7 @@ echo
 echo ">>> sanity"
 # Each pair must appear exactly SMOKE_REPS times, and p-values must be usable -- an all-NA
 # p_value column is the signature of the simulated matrix reaching sceptre in the wrong class,
-# which fails silently rather than erroring (see the note in bin/lib/simulate.R).
+# which fails silently rather than erroring (see the note in lib/simulate.R).
 awk -F'\t' '
   NR == 1 {
     for (i = 1; i <= NF; i++) col[$i] = i

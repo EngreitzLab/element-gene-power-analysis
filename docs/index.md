@@ -41,15 +41,15 @@ pixi run setup
 pixi run check-api        # asserts the pinned sceptre exposes the internals this pipeline uses
 
 # 2. derive the simulation inputs from your sceptre object
-Rscript bin/prepare_sim_input.R \
+Rscript src/prepare_sim_input.R \
     --sceptre-object results/sample1/sceptre_object.rds \
     --outdir prepared/
 
 # 3. split the pairs into per-task chunks
-Rscript bin/split_pairs.R --pairs prepared/pairs.tsv --n-splits 280 --outdir splits/
+Rscript src/split_pairs.R --pairs prepared/pairs.tsv --n-splits 280 --outdir splits/
 
 # 4. simulate one chunk (repeat per split and per effect size)
-Rscript bin/run_power_simulation.R \
+Rscript src/run_power_simulation.R \
     --sim-input prepared/sim_input.rds \
     --sceptre-template prepared/sceptre_template.rds \
     --pairs splits/split_001.tsv \
@@ -58,9 +58,9 @@ Rscript bin/run_power_simulation.R \
     --out sim/split_001_es0.15.tsv
 
 # 5. power per pair, then one table across effect sizes
-Rscript bin/compute_power.R --simulations "$(ls sim/*_es0.15.tsv | paste -sd, -)" \
+Rscript src/compute_power.R --simulations "$(ls sim/*_es0.15.tsv | paste -sd, -)" \
     --threshold-file prepared/discovery_threshold.txt --out power_es0.15.tsv
-Rscript bin/summarize_power.R --power power_es0.15.tsv,power_es0.2.tsv --out power_summary.tsv
+Rscript src/summarize_power.R --power power_es0.15.tsv,power_es0.2.tsv --out power_summary.tsv
 ```
 
 Every script is standalone and self-documenting via `--help`. See

@@ -2,7 +2,7 @@ Subject: let a caller reuse the gRNA precomputation across CRT analyses
 
 Applies to Katsevich-Lab/sceptre at SCEPTRE_SHA = 3ba046b86f33e99dee633fbb8704ee8defdb442d
 (DESCRIPTION version 0.99.0, `main` as of 2026-08-07; there is no v0.99.0 tag). Applied by
-bin/install_sceptre.R before R CMD INSTALL, with no fuzz and no offset search, so bumping the pin
+src/install_sceptre.R before R CMD INSTALL, with no fuzz and no offset search, so bumping the pin
 forces this patch to be revisited rather than silently dropped.
 
 Style follows the upstream Air config (air.toml: 4-space indent, 80-char width, one argument per

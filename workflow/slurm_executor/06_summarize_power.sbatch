@@ -40,7 +40,7 @@ out="${OUTDIR}/power_summary.tsv"
 echo "inputs:  ${power_list}"
 echo
 
-pixi_run Rscript bin/summarize_power.R \
+pixi_run Rscript src/summarize_power.R \
   --power "${power_list}" \
   --power-threshold 0.8 \
   --out "${out}"

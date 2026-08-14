@@ -32,7 +32,7 @@ echo "input:   ${SCEPTRE_OBJECT}  ($(du -h "${SCEPTRE_OBJECT}" | cut -f1))"
 echo "outdir:  ${PREPARED_DIR}"
 echo
 
-pixi_run Rscript bin/prepare_sim_input.R \
+pixi_run Rscript src/prepare_sim_input.R \
   --sceptre-object "${SCEPTRE_OBJECT}" \
   --outdir "${PREPARED_DIR}"
 

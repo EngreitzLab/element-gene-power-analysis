@@ -2,7 +2,7 @@
 #
 # Compare the refactored pipeline's power estimates against the old pipeline's.
 #
-# This lives in workflow/ rather than bin/ deliberately: bin/ is the pipeline surface that the
+# This lives in workflow/ rather than src/ deliberately: src/ is the pipeline surface that the
 # workflow engine stages onto PATH, and a one-off validation tool does not belong there.
 #
 # WHAT IS AND IS NOT COMPARABLE

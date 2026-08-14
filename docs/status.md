@@ -33,15 +33,20 @@ precomputation reuse already collected most of what it was for.
 
 ### The pipeline
 
-Five standalone executables in `bin/`, each with `--help`, none referencing `snakemake@`:
+Five standalone executables in `src/`, each with `--help`, none referencing `snakemake@`:
 
 ```
 prepare_sim_input.R -> split_pairs.R -> run_power_simulation.R -> compute_power.R -> summarize_power.R
 ```
 
-Shared code lives in `bin/lib/` (`cli.R`, `sim_input.R`, `pert_input.R`, `simulate.R`,
-`sceptre_io.R`), sourced by a script-relative path so it works both standalone and staged onto
-`PATH` by a workflow engine.
+Shared code lives in `lib/` at the repo root (`cli.R`, `sim_input.R`, `pert_input.R`, `simulate.R`,
+`sceptre_io.R`, `apply_patch.R`), located from the calling script's own path — each executable
+resolves `dirname(dirname(<its own path>))/lib` — so it works both standalone and staged onto `PATH`
+by a workflow engine.
+
+**Layout changed on 2026-08-13**, ahead of the Nextflow work: `bin/` became `src/`, and `bin/lib/`
+was lifted to a top-level `lib/`. The old Snakemake implementation was removed at the same time and
+lives on the **`legacy`** branch. Anything referring to `bin/` predates this.
 
 ### Measured improvements
 
@@ -294,7 +299,7 @@ the whole sweep. 100 replicates, not 100 × 6.
 
 What shipped:
 
-1. **`bin/fit_null_models.R`** — for each replicate, simulates a null matrix (no knockdown) and runs
+1. **`src/fit_null_models.R`** — for each replicate, simulates a null matrix (no knockdown) and runs
    one `run_discovery_analysis()` with `@response_precomputations` empty, keeping only the resulting
    slot. An entry is 11 named coefficients plus a `theta` scalar, so 100 replicates × 272 genes is a
    few hundred KB. Seeded from `(seed, rep)` only — deliberately *not*
@@ -303,7 +308,7 @@ What shipped:
 2. **`run_power_simulation.R --null-precomputations`** assigns that replicate's entry to
    `@response_precomputations` inside the replicate loop (`line 317`), and validates that the bundle's
    seed and replicate range match the run's.
-3. **The inherited slot is cleared in `slim_sceptre_object()`** (`bin/lib/sceptre_io.R:199`), *after*
+3. **The inherited slot is cleared in `slim_sceptre_object()`** (`lib/sceptre_io.R:199`), *after*
    `build_dispersion_vector` has read it (`prepare_sim_input.R:259`) — dispersions must keep coming
    from the real data, since they set the noise the simulation is meant to reproduce. Only the null
    model moves. Clearing is what makes an accidental `as_is` impossible to reintroduce.
@@ -409,11 +414,11 @@ A target that is rank deficient *within its own cells* is omitted from the cache
 `glm.fit` returns `NA` for an aliased coefficient while keeping `fitted.values` valid, so a naive
 `X %*% coefs` would yield all-`NA`.
 
-Supporting machinery: `bin/lib/apply_patch.R` is a pure-R unified-diff applier, needed because the
+Supporting machinery: `lib/apply_patch.R` is a pure-R unified-diff applier, needed because the
 cluster runs everything in a stock `ubuntu:22.04` container that has neither `patch` nor `git`. It is
 stricter than `patch(1)` — no fuzz, no offset search, exact context match — so a moved pin fails
-loudly. `bin/install_sceptre.R` stamps `RemoteSha` and a `LocalPatches` md5 into DESCRIPTION and
-short-circuits only when **both** match; `bin/check_sceptre_api.R` asserts the patched API
+loudly. `src/install_sceptre.R` stamps `RemoteSha` and a `LocalPatches` md5 into DESCRIPTION and
+short-circuits only when **both** match; `src/check_sceptre_api.R` asserts the patched API
 separately, because an unapplied patch would otherwise surface only at the first
 `run_discovery_analysis()` call, long after steps 01 and 02.
 
@@ -528,8 +533,10 @@ Notes for whoever builds it:
   64 GB for prepare).
 - `cpus 1` on the simulation process — sceptre runs with `parallel = FALSE` and parallelism comes
   from the fan-out.
-- Removing `Snakefile`, `rules/` and `R/` belongs to this step. That also turns `pixi run lint`
-  green: it currently flags exactly those legacy files.
+- ~~Removing `Snakefile`, `rules/` and `R/` belongs to this step.~~ **Done ahead of it**, on
+  2026-08-13, once Comparison 1 had passed and the old implementation had nothing left to prove.
+  `Snakefile`, `rules/`, `R/` and `envs/` are gone from this branch and preserved on **`legacy`**.
+  `pixi run lint` is now **green** — those files were the only things it flagged.
 
 #### Why not sceptre's own Nextflow pipeline
 
@@ -561,7 +568,7 @@ the null-model question above.
    centring, `create_effect_size_matrix` shape, split binning conservation, `wilson_interval`
    against known values, `build_dispersion_vector` erroring on a missing gene, `effect_label`
    across `0.15 / 0.2 / 0.5 / 0.125`.
-2. **Synthetic test data generator** (`bin/make_test_data.R`) so CI can run without lab data.
+2. **Synthetic test data generator** (`src/make_test_data.R`) so CI can run without lab data.
 3. ~~**Old-vs-new comparison**~~ — **done and passed**, job `38916341`; see Comparison 1 below.
 4. **Two-stage replicate allocation** — documented in
    [Choosing num_replicates]({{ site.baseurl }}{% link choosing-num-replicates.md %}) but not
@@ -674,7 +681,7 @@ The dependency list was written before the code was finished. Re-audit the finis
 
 ### Step 11 — fit the power curve and run three effect sizes instead of six
 
-Prototyped in `bin/fit_power_curve.R`, validated on one dataset, not yet adopted. Halves the cost of
+Prototyped in `src/fit_power_curve.R`, validated on one dataset, not yet adopted. Halves the cost of
 a sweep (~2,575 CPU-hours at 100 replicates on this dataset) and makes the minimum detectable effect
 size continuous rather than snapped to whichever effect sizes were run.
 
@@ -688,7 +695,7 @@ power(effect_size) = Phi(beta / SE - z),   beta = -log(1 - effect_size),  z = qn
 (perturbed cells, expression, dispersion), and `z` is fixed by the discovery threshold and shared by
 every pair. On the probit scale that is a straight line through `-z` with slope `1/SE`: **one free
 parameter per pair**, so three effect sizes leave two degrees of freedom to *check* the fit rather
-than just enough to force it. `bin/fit_power_curve.R` fits it as a binomial GLM with a probit link,
+than just enough to force it. `src/fit_power_curve.R` fits it as a binomial GLM with a probit link,
 no intercept and `-z` as an offset — a GLM rather than least squares on `qnorm(power)` because 0/100
 and 100/100 still carry information about the slope, whereas `qnorm()` would be infinite there.
 
@@ -936,12 +943,12 @@ Three targets, 2 replicates — should finish in a couple of minutes and proves 
 
 ```sh
 mkdir -p prepared splits sim
-Rscript bin/prepare_sim_input.R \
+Rscript src/prepare_sim_input.R \
   --sceptre-object results/sample1/sceptre_object.rds --outdir prepared/
 
-Rscript bin/split_pairs.R --pairs prepared/pairs.tsv --n-splits 280 --outdir splits/
+Rscript src/split_pairs.R --pairs prepared/pairs.tsv --n-splits 280 --outdir splits/
 
-Rscript bin/run_power_simulation.R \
+Rscript src/run_power_simulation.R \
   --sim-input prepared/sim_input.rds --sceptre-template prepared/sceptre_template.rds \
   --pairs splits/split_001.tsv --grna-targets prepared/grna_targets.tsv \
   --effect-size 0.15 --reps 2 --seed 20250812 --out sim/smoke.tsv
@@ -963,10 +970,10 @@ and `02c` and pass the bundle.
 #SBATCH --mem=12G
 #SBATCH --time=1:00:00
 #SBATCH --cpus-per-task=1
-pixi run Rscript bin/prepare_sim_input.R \
+pixi run Rscript src/prepare_sim_input.R \
     --sceptre-object results/sample1/sceptre_object.rds \
     --outdir prepared/
-pixi run Rscript bin/split_pairs.R \
+pixi run Rscript src/split_pairs.R \
     --pairs prepared/pairs.tsv --n-splits 280 --outdir splits/
 ```
 
@@ -983,7 +990,7 @@ pixi run Rscript bin/split_pairs.R \
 # the width of --n-splits, so 280 splits give split_001.tsv but 1000 would give split_0001.tsv.
 SPLIT=$(ls splits/split_*.tsv | sed -n "${SLURM_ARRAY_TASK_ID}p")
 for ES in 0.15 0.2; do
-    pixi run Rscript bin/run_power_simulation.R \
+    pixi run Rscript src/run_power_simulation.R \
         --sim-input prepared/sim_input.rds \
         --sceptre-template prepared/sceptre_template.rds \
         --pairs "$SPLIT" \
@@ -997,13 +1004,13 @@ Then per effect size:
 
 ```sh
 for ES in 0.15 0.2; do
-    pixi run Rscript bin/compute_power.R \
+    pixi run Rscript src/compute_power.R \
         --simulations "$(ls sim/*_es${ES}.tsv | paste -sd, -)" \
         --threshold-file prepared/discovery_threshold.txt \
         --out "power_es${ES}.tsv"
 done
 
-pixi run Rscript bin/summarize_power.R \
+pixi run Rscript src/summarize_power.R \
     --power power_es0.15.tsv,power_es0.2.tsv --out power_summary.tsv
 ```
 
@@ -1068,7 +1075,7 @@ should solve on a Linux compute node.
 #
 #    Sherlock's default git is 1.8.3.1, which has no `worktree` subcommand -- load a
 #    modern one first. Do NOT `git checkout` the old commit in the working tree instead:
-#    the sbatch scripts run `bin/` from the repository root, so swapping branches under a
+#    the sbatch scripts run `src/` from the repository root, so swapping branches under a
 #    running array silently changes the code mid-run.
 ml system git/2.45.1
 git worktree add ../egpa-old b3cf7ab
@@ -1182,7 +1189,7 @@ carries `mean_pert_cells` and `average_expression_all_cells` per pair, so fittin
 `power ~ f(pert_cells, expression)` and evaluating at reference expression is post-processing.
 Simulating a reference-gene panel instead would cost ~450 CPU-h, because the per-target term
 is paid whether a target carries one gene or thirty. Whoever picks this up should decide where it
-lives: a new `bin/` script, or a section of `summarize_power.R`.
+lives: a new `src/` script, or a section of `summarize_power.R`.
 
 What *does* hold at element level is a floor: **21.9 % of elements (663/3,026) have no tested pair
 that could have reached power 0.8**, so they cannot support a "regulates nothing" claim under any
@@ -1232,6 +1239,6 @@ negative claims are essentially never assertable at 100 replicates and a 15 % kn
   1 FAILED). Set `--target-overhead 8.6` if `N_SPLITS` ever drops far enough that splits hold ten or
   more targets; do not re-split an array for it.
 - **ODM / out-of-core support** is designed for but not implemented. The seam is
-  `get_response_matrix()` in `bin/lib/sceptre_io.R`, which currently errors explicitly on an `odm`.
+  `get_response_matrix()` in `lib/sceptre_io.R`, which currently errors explicitly on an `odm`.
   The hard part is that poscounts size factors need a per-cell median over genes — a column-wise
   reduction — while an `odm` is row-accessible.

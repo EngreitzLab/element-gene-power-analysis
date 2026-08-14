@@ -5,7 +5,7 @@ nav_order: 2
 
 # Usage
 
-Every step is a standalone executable in `bin/` that takes explicit command-line arguments and
+Every step is a standalone executable in `src/` that takes explicit command-line arguments and
 prints `--help`. Nothing reads a global config object, so any step can be run, re-run or debugged
 on its own.
 
@@ -49,7 +49,7 @@ Derives everything the simulation needs from the sceptre object, once, so the pa
 small files instead of a multi-gigabyte object.
 
 ```sh
-Rscript bin/prepare_sim_input.R \
+Rscript src/prepare_sim_input.R \
     --sceptre-object results/sample1/sceptre_object.rds \
     --outdir prepared/
 ```
@@ -76,7 +76,7 @@ Splits targets into balanced chunks. Whole targets stay together, because the si
 per-target state once and then loops over replicates.
 
 ```sh
-Rscript bin/split_pairs.R --pairs prepared/pairs.tsv --n-splits 280 --outdir splits/
+Rscript src/split_pairs.R --pairs prepared/pairs.tsv --n-splits 280 --outdir splits/
 ```
 
 | Option | Default | Meaning |
@@ -95,7 +95,7 @@ see it. It also refuses to produce empty splits.
 The actual simulation. One invocation handles one split × one effect size × one chunk of replicates.
 
 ```sh
-Rscript bin/run_power_simulation.R \
+Rscript src/run_power_simulation.R \
     --sim-input prepared/sim_input.rds \
     --sceptre-template prepared/sceptre_template.rds \
     --pairs splits/split_001.tsv \
@@ -123,7 +123,7 @@ Rscript bin/run_power_simulation.R \
 for es in 0.15 0.2; do
     for split in splits/split_*.tsv; do
         name=$(basename "$split" .tsv)
-        Rscript bin/run_power_simulation.R \
+        Rscript src/run_power_simulation.R \
             --sim-input prepared/sim_input.rds \
             --sceptre-template prepared/sceptre_template.rds \
             --pairs "$split" --grna-targets prepared/grna_targets.tsv \
@@ -138,7 +138,7 @@ done
 Turns per-replicate results into power per pair, with a Wilson interval.
 
 ```sh
-Rscript bin/compute_power.R \
+Rscript src/compute_power.R \
     --simulations "$(ls sim/*_es0.15.tsv | paste -sd, -)" \
     --threshold-file prepared/discovery_threshold.txt \
     --out power_es0.15.tsv
@@ -160,7 +160,7 @@ One row per pair, one `power_at_effect_size_<N>` column per effect size, plus th
 size at which each pair reaches a target power.
 
 ```sh
-Rscript bin/summarize_power.R \
+Rscript src/summarize_power.R \
     --power power_es0.15.tsv,power_es0.2.tsv \
     --power-threshold 0.8 \
     --out power_summary.tsv

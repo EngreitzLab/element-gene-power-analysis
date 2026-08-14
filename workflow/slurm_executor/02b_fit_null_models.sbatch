@@ -87,7 +87,7 @@ if [[ -s "${chunk_out}" ]]; then
   exit 0
 fi
 
-pixi_run Rscript bin/fit_null_models.R \
+pixi_run Rscript src/fit_null_models.R \
   --sim-input "${PREPARED_DIR}/sim_input.rds" \
   --sceptre-template "${PREPARED_DIR}/sceptre_template.rds" \
   --grna-targets "${PREPARED_DIR}/grna_targets.tsv" \

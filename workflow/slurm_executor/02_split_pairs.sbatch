@@ -32,7 +32,7 @@ require_file "${PREPARED_DIR}/pairs.tsv" "pairs.tsv from step 01"
 rm -rf "${SPLITS_DIR}"
 mkdir -p "${SPLITS_DIR}"
 
-pixi_run Rscript bin/split_pairs.R \
+pixi_run Rscript src/split_pairs.R \
   --pairs "${PREPARED_DIR}/pairs.tsv" \
   --n-splits "${N_SPLITS}" \
   --outdir "${SPLITS_DIR}"
