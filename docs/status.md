@@ -24,8 +24,10 @@ agrees with the old one on every check, including a zero difference in perturbed
 across all 34,886 pairs. See Comparison 1 below. Two equivalence checks had already removed the other
 confounders: the version bump and the gRNA patch each provably change no number.
 
-Still missing: Nextflow (Step 7) and a test suite (Step 8). Step 9 has been **retired** — the gRNA
-precomputation reuse already collected most of what it was for.
+Still missing: a test suite (Step 8). **Nextflow (Step 7) is in progress** on the `nextflow` branch —
+four of seven processes run, and `PREPARE_SIM_INPUT`'s output is byte-identical to the sbatch
+runner's. Step 9 has been **retired**: the gRNA precomputation reuse already collected most of what
+it was for.
 
 ---
 
@@ -509,30 +511,109 @@ Recorded because each cost real time and none is discoverable from the code.
 
 ## Left to do
 
-### Step 7 — Nextflow + SLURM profile
+### Step 7 — Nextflow + SLURM profile — **in progress**, on the `nextflow` branch
 
-Not started. `config/config.yml` already holds the parameters it will consume
-(`n_splits`, `reps_per_chunk`, `effect_sizes`, `num_replicates`, `seed`, …).
+Four of seven processes exist and run: `PREPARE_SIM_INPUT`, `SPLIT_PAIRS`, `FIT_NULL_MODELS`,
+`MERGE_NULL_MODELS`. Still to write: `POWER_SIMULATION`, `COMPUTE_POWER`, `SUMMARIZE_POWER`.
 
-Planned shape:
+Minimal DSL2, not nf-core scaffolding — same principle as `workflow/slurm_executor/`: no framework
+layer, so a failure is attributable to the step rather than the runner. **The sbatch executor stays**
+until Nextflow reproduces a run; it produced every measurement in this document.
 
 ```
-samplesheet -> PREPARE_SIM_INPUT (per sample)
-            -> SPLIT_PAIRS -> flatten
-            -> combine(effect_sizes) x combine(rep_chunks)
-            -> POWER_SIMULATION (fan-out)
-            -> collectFile by (sample, effect_size)
-            -> COMPUTE_POWER -> SUMMARIZE_POWER
+main.nf                            the DAG
+nextflow.config                    params and profiles
+conf/base.config                   measured resources, per process
+conf/sherlock.config               SLURM + apptainer + pixi
+config/config.yml                  production parameters
+config/test.yml                    3 splits x 2 replicates
+modules/local/*.nf                 one file per process
+workflow/nextflow/run.sbatch       the driver, which runs as a job
 ```
 
-Notes for whoever builds it:
+The DAG, which is **not** the shape planned above — that predates `null_fit`:
+
+```
+samplesheet -> PREPARE_SIM_INPUT ---+-> SPLIT_PAIRS -----------------+
+                                    |                               |
+                                    +-> FIT_NULL_MODELS (x reps)    |
+                                        -> MERGE_NULL_MODELS -------+
+                                                                    v
+                                    POWER_SIMULATION (split x effect size)
+                                         -> collectFile by (sample, effect size)
+                                         -> COMPUTE_POWER -> SUMMARIZE_POWER
+```
+
+`FIT_NULL_MODELS` hangs off `PREPARE_SIM_INPUT` rather than off `SPLIT_PAIRS` because a gene's null
+model is fitted on a null simulation and so depends on neither the target nor the effect size. One
+set of fits serves every split and every effect size in a sweep — 100 replicates, not 100 × splits ×
+effect sizes. Making it a sibling rather than a descendant is what expresses that.
+
+#### The design question that had to be settled first
+
+The sbatch runner does `cd $REPO_ROOT && pixi run`. Nextflow cannot: a task must run in its own work
+directory or its outputs are invisible to the engine. Two facts, both verified before building on
+them, make it work anyway:
+
+- **`pixi run --manifest-path <repo>/pixi.toml` preserves the working directory** (tested from
+  `/tmp`), so the task's outputs land in the task directory.
+- **`R_LIBS_USER` is derived from `$PIXI_PROJECT_ROOT`**, not the cwd, so the environment follows
+  the manifest.
+
+Every process invocation is built on that pair.
+
+#### Verified so far
+
+**`PREPARE_SIM_INPUT`'s output is byte-identical to the sbatch runner's** — all five files, both
+`.rds` objects included (`sim_input.rds` 16,057,759 bytes; `sceptre_template.rds` 46,520,066). That
+is a much stronger result than "it ran": a single difference anywhere in the container, pixi
+environment, R version or patched sceptre would perturb the serialised objects. The environment
+integration is therefore the same one the measurements came from.
+
+#### Four traps, each of which reported something other than its cause
+
+Recorded because every one cost time and none is guessable from the error text.
+
+1. **`.ifEmpty { error ... }` aborts every run.** Nextflow invokes the closure while *building* the
+   DAG, not when the channel proves empty, so a guard for a malformed samplesheet fired
+   unconditionally — and, being the first error raised, printed "samplesheet has no rows" in place
+   of the real failure further down, masking trap 2 completely. Validate the file eagerly instead.
+2. **`take` rejects a `def` local or an `as int` cast.** Both arrive wrapped in a `PojoWrapper` and
+   fail with `Missing process or function take([DataflowStream, PojoWrapper])`, which reads like a
+   missing operator. A literal or a `params.*` value works; nothing else tried did. Bound the range
+   when you build the channel rather than trimming it afterwards where you can.
+3. **`-profile test` was silently doing almost nothing.** Nextflow gives `-params-file` precedence
+   over profile params, and the driver always passes one, so every test override sharing a name with
+   a production parameter was discarded — the run used 2 null chunks of 1 replicate where the
+   profile asked for 1 of 2, and `num_replicates` stayed at 100. A "test" run would have been a
+   full-size run. Test settings now live in `config/test.yml`, selected with `PARAMS_FILE`.
+   **Profiles choose where a run executes; params files choose what it runs.**
+4. **A local `def scratch` is shadowed by the `scratch` process directive.** `conf/sherlock.config`
+   sets `process.scratch = false`, so `"--bind ${scratch}:${scratch}"` expanded to
+   `--bind false:false` and apptainer died with "unable to add false to mount list: destination must
+   be an absolute path". It had also silently reached `PIXI_CACHE_DIR` and friends. The variables are
+   named `scratchDir`/`groupHomeDir` for that reason — do not tidy them back.
+
+Two smaller ones: the driver must resolve `REPO_ROOT` from `scontrol show job ... Command=` rather
+than `$BASH_SOURCE`, because Slurm copies the script into its spool directory; and Nextflow's
+`file()` resolves a relative path against `launchDir` and returns an *absolute* path, so
+`file(p).isAbsolute()` is always true and cannot be used to test whether the user gave a relative
+path.
+
+#### Notes still standing
 
 - The combine step needs no script: `collectFile(keepHeader: true, skip: 1)` replaces the deleted
   `combine_sceptre_power_analysis.R`.
-- Resources from the table above, not the old Snakemake guesses (which asked 8 GB for simulation and
-  64 GB for prepare).
+- Resources come from the measured table above, not the old Snakemake guesses (which asked 8 GB for
+  simulation and 64 GB for prepare). `conf/base.config` names the source of each.
 - `cpus 1` on the simulation process — sceptre runs with `parallel = FALSE` and parallelism comes
   from the fan-out.
+- The driver runs as a job, never on a login node: it is a JVM that lives as long as the pipeline.
+  `NXF_HOME` and `NXF_WORK` are redirected to `$GROUP_HOME` and `$SCRATCH`, since the defaults are
+  `~/.nextflow` and `./work` and `$HOME` is 15 GB.
+- `nextflow run . -profile stub -params-file config/test.yml -stub-run` checks the wiring in seconds
+  without touching the cluster. The `stub` profile uses `resourceLimits` so the measured requests do
+  not have to be rewritten to fit a login node.
 - ~~Removing `Snakefile`, `rules/` and `R/` belongs to this step.~~ **Done ahead of it**, on
   2026-08-13, once Comparison 1 had passed and the old implementation had nothing left to prove.
   `Snakefile`, `rules/`, `R/` and `envs/` are gone from this branch and preserved on **`legacy`**.
