@@ -4,10 +4,14 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=32G
+#SBATCH --mem=8G
 #SBATCH --time=02:00:00
 #SBATCH --output=logs/refactor/%x-%A.out
 #SBATCH --error=logs/refactor/%x-%A.err
+#
+# 8 GB, not the 32 GB this asked for until 2026-08-14: measured 2.1 GB peak and 42 seconds over
+# 1,000 simulation files at 34,886 pairs x 100 replicates (job 38978285). The old figure was never
+# measured and queued the job behind almost everything on a shared partition.
 #
 # Step 5 -- collapse the per-replicate simulation results into one power estimate per pair.
 #

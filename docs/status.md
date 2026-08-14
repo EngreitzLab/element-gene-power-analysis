@@ -119,6 +119,7 @@ Needed to size cluster runs. Measured, not estimated. The right-hand column is S
 | Per-task wall clock, measured | — | `as_is`: median **57.2 min**, mean 60.0, p95 85.4, max **110.1**. `null_fit` + reuse: median **36 min**, max **61** (4 h requested → 2 h is ample) |
 | Peak RAM, simulation task | 1.5 GB → request 4 GB | **median 2.27 GB, max 3.27 GB over 1,000 tasks** (8 GB requested → 6 GB keeps 1.8× headroom) |
 | Peak RAM, `prepare_sim_input.R` | 7.7 GB → request 12 GB | 16 GB requested, ~70s |
+| Measured peak RAM, every step | — | `prepare` 7.4 GB, `fit_null_models` **7.6 GB** (10 GB requested — only 1.3× headroom), `power_simulation` 2.9 GB, `compute_power` **2.1 GB** (was requesting 32 GB, now 8), `split`/`merge`/`summarize` < 0.15 GB. From job `38978285`'s Nextflow trace |
 
 **The ~295 CPU-hour figure was a laptop measurement and is roughly 3× optimistic.** Sherlock's
 cores are slower per-thread than an M-series laptop, and sceptre's per-call cost is untouched by the
@@ -562,6 +563,33 @@ them, make it work anyway:
 
 Every process invocation is built on that pair.
 
+#### Validated at production scale
+
+**The Nextflow runner reproduces the sbatch runner exactly, on a full 1,000-split run.** Job
+`38978285`, 2h19m wall clock, all seven processes, 34,886 pairs at 100 replicates:
+
+| | |
+|---|---:|
+| Pairs matched | 34,886 |
+| Pairs whose **power** differs | **0** (max abs difference 0) |
+| Pairs whose **certification** flips | **0** |
+
+That is the check that decides whether the two runners can be considered equivalent, and it passes
+on the deliverable rather than on an intermediate. Note the per-replicate p-values do still differ
+in the far tail between the two runs — see "Reproducibility is bitwise on one node" — but not one of
+those differences reaches the power estimate.
+
+Two incidental findings from that run:
+
+- **`results/day0_grna20/sceptre_object.rds` and `results/day0_grna20_no_shuffle/sceptre_object.rds`
+  are byte-identical.** The `_no_shuffle` suffix describes how the *old pipeline* processed the
+  sample — with the size-factor permutation removed — not a different input. The dataset inventory
+  under Step 11 lists them as separate datasets, which is true of their old-pipeline *outputs* and
+  false of their inputs. Running the refactored pipeline on both is redundant.
+- **Preemption on `owners` is handled.** Three tasks were killed with exit 143 and retried
+  automatically by `conf/base.config`'s `errorStrategy`, without intervention. The sbatch runner
+  needs a resubmission plus its resume check to do the same.
+
 #### Verified so far
 
 **`PREPARE_SIM_INPUT`'s output is byte-identical to the sbatch runner's** — all five files, both
@@ -697,9 +725,32 @@ pipeline has.
 
    Not covered yet: split binning conservation, which is enforced in `SPLIT_PAIRS` and
    `02_split_pairs.sbatch` at runtime rather than by a unit test.
-2. **Synthetic test data generator** (`src/make_test_data.R`) so CI can run without lab data. Not
-   started, and the last thing standing between this repo and CI that means anything: every test
-   above is a pure-function test, and nothing exercises the sceptre path without the 448 MB object.
+2. ~~**Synthetic test data generator**~~ — **done**: `src/make_test_data.R` builds a sceptre object
+   the whole pipeline runs on, in 43 seconds, with no lab data.
+   `sbatch workflow/slurm_executor/13_make_test_data.sbatch` builds it and then runs all six steps
+   on it end to end. Latest: 360 QC-passing pairs, 27 significant discoveries, threshold 7.3 × 10⁻³,
+   30 precomputations, 648 KB.
+
+   Built through sceptre's own API — `import_data` → `set_analysis_parameters` → `assign_grnas` →
+   `run_qc` → `run_discovery_analysis` — rather than by fabricating slots, so it cannot drift from
+   the pinned library. Two constraints are not obvious and both were found by the object being
+   rejected:
+
+   - **It has to plant real knockdowns.** `discovery_threshold()` errors when nothing is
+     significant, deliberately, because the old code returned `-Inf` there and reported zero power
+     for every pair. Pure noise produces an unusable object, not a boring one.
+   - **Cells must carry a *variable* number of gRNAs.** With exactly one each, `grna_n_nonzero` is
+     constant, collinear with the intercept, and sceptre rejects the formula as containing
+     "redundant information". `moi = "high"` for the same faithfulness reason: it is what makes the
+     control group the complement, which is the CRT path production actually uses.
+
+   The object is **not committed** — `tests/data/` is gitignored. It is 648 KB against the
+   pre-commit hook's 512 KB ceiling, and regenerating it is the point of having a generator.
+
+   `sceptredata` was considered instead. It is not on conda, not installed, and not even in
+   sceptre's `Suggests`, so it would need the same SHA-pin-and-install machinery as sceptre itself;
+   and since it ships raw matrices rather than a `sceptre_object`, the API calls above would still
+   have to be made by hand. Reasonable, but it removes less than it adds.
 3. ~~**Old-vs-new comparison**~~ — **done and passed**, job `38916341`; see Comparison 1 below.
 4. **Two-stage replicate allocation** — documented in
    [Choosing num_replicates]({{ site.baseurl }}{% link choosing-num-replicates.md %}) but not
