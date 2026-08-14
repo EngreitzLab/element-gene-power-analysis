@@ -223,16 +223,51 @@ Caveat on the magnitude: 3 targets, 53 pairs, 5 replicates. The *direction* is s
 equivalence of `null_fit` is unambiguous; the 2.64 % figure is thin and should not be quoted as
 precise.
 
+**Superseded on the magnitude.** The full 100-replicate run under both configurations (see
+Consequences below) puts the mean shift at **+0.0063**, not the ~0.026 this sample gave — the
+direction held, the size did not. The 2.64 % flip rate was measured on 5 replicates, where a single
+replicate crossing the threshold moves power by 0.2; at 100 replicates it is 0.8 percentage points
+of pairs crossing the certification line.
+
 Note the coefficients themselves differ substantially — inherited theta median 20.0 against 18.8 from
 the null fit, median worst-coefficient difference 7.77 — while the p-values barely move. sceptre's
 conditional-resampling test is far more robust to the null model than the null model is stable.
 
 ### Consequences
 
-- **The effect size 0.15 array (`38849611`) ran `as_is`**, so its power values are biased low by
-  roughly 0.03. That is *conservative* for the false-negative triage question — it under-certifies
-  negatives rather than over-certifying them — so nothing built on it is unsafe, only pessimistic.
-  The `null_fit` rerun is queued as `38882207`; keep the `as_is` output for comparison.
+- **The effect size 0.15 array (`38849611`) ran `as_is`, and the bias has now been measured directly
+  rather than extrapolated.** Both configurations exist at 100 replicates over all 34,886 pairs
+  (`power_as_is/` and `power_null_fit/`), and they are exactly paired — same simulated counts, so
+  every difference is the null model with zero Monte-Carlo noise between them.
+
+  | | `as_is` | `null_fit` |
+  |---|---:|---:|
+  | Mean power | 0.5933 | 0.5996 (**+0.0063**) |
+  | Certified (`power_ci_low` ≥ 0.8) | 13,094 (37.5 %) | 13,374 (**38.3 %**) |
+  | Ambiguous | 4,382 (12.6 %) | 4,408 (12.6 %) |
+  | Underpowered | 17,410 (49.9 %) | 17,104 (49.0 %) |
+
+  **The direction is confirmed and the magnitude is ~4× smaller than predicted.** `as_is` understates
+  power: 11,649 pairs rise against 3,631 that fall, a 3.2:1 ratio that noise would not produce. But
+  the shift is **+0.0063 mean, 0.0100 mean absolute**, against the ~0.03 this document extrapolated
+  from 3 targets × 53 pairs × 5 replicates. That extrapolation was too thin, as it said at the time;
+  treat 0.0063 as the number and the earlier 0.03 as withdrawn.
+
+  It concentrates exactly where the mechanism says it should — in the transition band, not at the
+  saturated ends:
+
+  | `as_is` power band | pairs | mean Δ | % moved |
+  |---|---:|---:|---:|
+  | 0.00–0.02 (floor) | 4,411 | +0.0010 | 9.7 % |
+  | 0.02–0.20 | 4,409 | +0.0094 | 52.7 % |
+  | 0.20–0.50 | 4,411 | +0.0121 | 73.4 % |
+  | 0.50–0.80 | 5,894 | +0.0130 | 73.5 % |
+  | 0.80–0.98 | 8,937 | +0.0047 | 48.6 % |
+  | 0.98–1.00 (ceiling) | 6,824 | +0.0003 | 9.0 % |
+
+  Practical consequence: `null_fit` is the correct configuration and should stay the default, but
+  **nothing built on the `as_is` numbers was materially wrong** — it moved 280 of 34,886 pairs across
+  the certification line, 0.8 percentage points. Keep both outputs.
 - The pre-refactor pipeline inherited the same cache, so the **old-vs-new comparison is unaffected**:
   both sides share the bias. Compare them `as_is` against `as_is`.
 - Clearing the slot without supplying null fits gives `cleared`, at 4.3×. The two changes must land
@@ -1053,9 +1088,10 @@ or could the experiment not have seen one? Three consequences follow, and
 
 **1. Threshold `power_ci_low`, never `power`.** "This negative is biological" asserts that power was
 *at least* 0.8. Certifying that needs 88/100 successes — or 29/30, which is why 30 replicates is
-unusable for this question regardless of what the precision tables say. At 0.15 and 100 replicates:
-37.7 % of pairs certified, 12.4 % ambiguous, 49.9 % clearly underpowered (that last half is not a
-replicate problem — it needs more perturbed cells or a larger effect).
+unusable for this question regardless of what the precision tables say. At 0.15 and 100 replicates,
+under `null_fit` (`power_null_fit/power_es0.15.tsv`): **38.3 % of pairs certified, 12.6 % ambiguous,
+49.0 % clearly underpowered** (that last half is not a replicate problem — it needs more perturbed
+cells or a larger effect). The `as_is` run gave 37.5 / 12.6 / 49.9.
 
 **2. Minimum detectable effect size is the deliverable, not six power columns.** `summarize_power.R`
 now emits `min_detectable_effect_size` plus a `_ci_low` / `_ci_high` bracket, where `_ci_high` is
