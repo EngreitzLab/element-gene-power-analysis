@@ -21,14 +21,14 @@ Three environments, so the one every task activates stays small:
 
 | Environment | Contains | Why separate |
 |---|---|---|
-| default | `r-base`, `r-optparse`, `nextflow`, and the packages sceptre reaches on our code path (`r-matrix`, `r-bh`, `r-rcpp`, `r-dplyr`, `r-data.table`, `r-purrr`, `r-crayon`) | activated by every task |
-| `build` | `r-remotes`, compilers, `r-ggplot2`, `r-cowplot`, `r-scales` | only needed to compile sceptre |
+| default | `r-base`, `r-optparse`, `nextflow`, and the packages sceptre reaches on our code path (`r-matrix`, `r-rcpp`, `r-dplyr`, `r-data.table`, `r-purrr`, `r-crayon`, `r-parallelly`, `r-withr`) | activated by every task |
+| `build` | `r-remotes`, compilers, `r-ggplot2`, `r-cowplot`, `r-scales`, `r-bh` | only needed to compile sceptre |
 | `dev` | `r-testthat` | only needed to run tests |
 
 ### Why `ggplot2` is a build-only dependency
 
 `R CMD INSTALL` enforces a package's DESCRIPTION `Imports` **even for packages absent from its
-NAMESPACE**. sceptre's NAMESPACE imports only `BH`, `Matrix` and `Rcpp`, but its DESCRIPTION lists
+NAMESPACE**. sceptre's NAMESPACE imports only `Matrix` and `Rcpp`, but its DESCRIPTION lists
 `ggplot2`, `cowplot`, `scales`, `dplyr`, `data.table`, `purrr` and `crayon`, so all of them must be
 present to build it. At *runtime* only the ones actually called matter — and `ggplot2`, `cowplot` and
 `scales` appear solely in `plotting_functions.R`, `qq_plot_helpers.R` and
@@ -36,6 +36,10 @@ present to build it. At *runtime* only the ones actually called matter — and `
 
 `purrr`, by contrast, *is* needed at runtime: `purrr::flatten()` is called in the precomputation
 path that `run_discovery_analysis()` goes through.
+
+`BH` is build-only for a different reason again: sceptre declares it under `LinkingTo`, so it is a
+header-only C++ dependency used to compile and never loaded at all. `src/audit_dependencies.R`
+reports all three categories separately, and is the check to run before trusting this table.
 
 ### No Bioconductor
 
@@ -123,10 +127,11 @@ Three things to know:
 - **`patch(1)` is not used.** Everything runs inside a stock `ubuntu:22.04` container, which ships
   neither `patch` nor `git`, so `lib/apply_patch.R` applies the diff in R.
 
-Upstreaming these to Katsevich-Lab/sceptre is wanted but deliberately deferred. The plan is in
-`scalable-baking-key.md` (untracked) and is **not yet implemented upstream** — note it targets
-`upstream/main` (v0.99.0, reformatted end to end), not the v0.10.3 pinned here, so the patch is a
-starting point for that diff rather than the diff itself.
+**The patch stays local.** Upstreaming it to Katsevich-Lab/sceptre was considered and dropped: the
+patch is small, pinned to a known SHA, asserted by `check_sceptre_api.R`, and re-applied
+automatically on install, so carrying it costs little — whereas a PR would mean tracking review on
+someone else's schedule while the pin moves underneath it. Nothing is implemented upstream and
+nothing is planned.
 
 ## Repository layout
 
