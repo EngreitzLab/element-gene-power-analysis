@@ -510,18 +510,27 @@ def test_a_fully_knocked_down_gene_draws_zeros_rather_than_failing():
     assert (counts == 0).all()
 
 
-def test_counts_come_back_as_int16_and_overflow_is_refused_not_wrapped():
+def test_counts_come_back_as_int16_and_a_draw_too_big_for_it_is_promoted_not_wrapped():
     counts = draw_counts(
         np.full((1, 20), 3.0), np.ones((1, 20)), np.array([5.0]), np.random.default_rng(8)
     )
     assert counts.dtype == np.int16
-    with pytest.raises(OverflowError, match="int16"):
-        draw_counts(
-            np.full((1, 200), 1e5),
-            np.ones((1, 200)),
-            np.array([1e6]),
-            np.random.default_rng(9),
-        )
+    big = draw_counts(
+        np.full((1, 200), 1e5),
+        np.ones((1, 200)),
+        np.array([1e6]),
+        np.random.default_rng(9),
+    )
+    assert big.dtype == np.int32
+    exact = draw_counts(
+        np.full((1, 200), 1e5),
+        np.ones((1, 200)),
+        np.array([1e6]),
+        np.random.default_rng(9),
+        dtype=None,
+    )
+    np.testing.assert_array_equal(big, exact)
+    assert big.min() > np.iinfo(np.int16).max
 
 
 def test_the_draw_rejects_inputs_that_do_not_line_up():

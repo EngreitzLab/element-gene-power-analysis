@@ -16,10 +16,14 @@ from __future__ import annotations
 
 import numpy as np
 
-# int16 holds counts to 32,767. The largest single count in a real screen
-# measured here is 2,717, but a simulated draw has a tail, so the promotion is
-# checked rather than assumed.
+# int16 holds counts to 32,767, which covers almost every draw. Not all of them: sceptre's fitted
+# mean for a very highly expressed gene can reach far past anything observed in the cells with
+# extreme covariates -- HBA2 in DC-TAP K562 has an observed maximum of 6,583 and a fitted mean of
+# 20,104 in its most extreme cell, and a draw from NB(mean 20,104, theta 2.1) passes 32,767 about
+# one time in seven. Those draws are legitimate draws from the model the test assumes, so a draw
+# that does not fit is promoted to the next integer width rather than refused.
 _COUNT_DTYPE = np.int16
+_WIDER = (np.int16, np.int32, np.int64)
 
 
 def draw_counts(
@@ -38,9 +42,11 @@ def draw_counts(
     `n(1-p)/p`, so `n = theta` and `p = theta / (theta + mu)` give mean `mu`
     and variance `mu + mu^2/theta` -- R's `rnbinom(mu=, size=)`.
 
-    Returned as `int16` by default. These are counts; holding them as float64
-    costs four times the memory for no information, and the simulation's whole
-    shape depends on how many replicates fit in one process.
+    Returned as `int16` by default, or the narrowest of int16/int32/int64 at
+    least as wide as `dtype` that holds the largest draw. These are counts;
+    holding them as float64 costs four times the memory for no information, and
+    the simulation's whole shape depends on how many replicates fit in one
+    process. A draw is never wrapped or clipped.
     """
     baseline = np.asarray(baseline, dtype=float)
     if baseline.shape != effect_size.shape:
@@ -60,10 +66,11 @@ def draw_counts(
 
     if dtype is None:
         return counts
-    info = np.iinfo(dtype)
-    if counts.max(initial=0) > info.max:
-        raise OverflowError(
-            f"a simulated count exceeded {dtype.__name__}'s range ({info.max}); pass "
-            "dtype=None to keep the draw at full width"
-        )
-    return counts.astype(dtype)
+    largest = counts.max(initial=0)
+    for candidate in _WIDER:
+        if (
+            np.dtype(candidate).itemsize >= np.dtype(dtype).itemsize
+            and largest <= np.iinfo(candidate).max
+        ):
+            return counts.astype(candidate)
+    return counts
