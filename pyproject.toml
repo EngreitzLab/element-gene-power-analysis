@@ -11,6 +11,8 @@ dependencies = [
     "pandas>=2.0",
     "h5py>=3.8",
     "pyarrow>=14",
+    "anndata",   # reading the .h5mu pysceptre's export writes (pixi.toml has them too)
+    "mudata",
     "pysceptre",
 ]
 
