@@ -5595,6 +5595,8 @@ packages:
   - pandas>=2.0
   - h5py>=3.8
   - pyarrow>=14
+  - anndata
+  - mudata
   - pysceptre
   - pytest>=7 ; extra == 'dev'
   - ruff>=0.5 ; extra == 'dev'
