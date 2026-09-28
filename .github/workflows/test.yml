@@ -49,5 +49,5 @@ jobs:
           export PYTHONPATH=/tmp/pysceptre/scripts
           curl -fsSL https://get.nextflow.io | bash
           uv run watteg-make-test-data --out tests/data/synthetic.h5mu
-          ./nextflow run . -profile standard -params-file config/test.yml -stub-run \
+          ./nextflow run . -profile stub -params-file config/test.yml -stub-run \
             --samplesheet assets/samplesheet_synthetic.csv --outdir /tmp/stub
