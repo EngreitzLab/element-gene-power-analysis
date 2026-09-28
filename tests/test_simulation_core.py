@@ -523,7 +523,10 @@ def test_counts_come_back_as_int16_and_a_draw_too_big_for_it_is_promoted_not_wra
     )
     assert big.dtype == np.int32
     exact = draw_counts(
-        np.full((1, 200), 1e5), np.ones((1, 200)), np.array([1e6]), np.random.default_rng(9),
+        np.full((1, 200), 1e5),
+        np.ones((1, 200)),
+        np.array([1e6]),
+        np.random.default_rng(9),
         dtype=None,
     )
     np.testing.assert_array_equal(big, exact)

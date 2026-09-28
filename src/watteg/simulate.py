@@ -68,8 +68,9 @@ def draw_counts(
         return counts
     largest = counts.max(initial=0)
     for candidate in _WIDER:
-        if np.dtype(candidate).itemsize >= np.dtype(dtype).itemsize and largest <= np.iinfo(
-            candidate
-        ).max:
+        if (
+            np.dtype(candidate).itemsize >= np.dtype(dtype).itemsize
+            and largest <= np.iinfo(candidate).max
+        ):
             return counts.astype(candidate)
     return counts
