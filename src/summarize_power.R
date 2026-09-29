@@ -126,8 +126,9 @@ for (column in shared) {
 
 # Per-gene values from sim_input, joined here rather than carried through the simulation.
 #
-# WHY HERE. The theory behind the power curve is SE^2 ~ (1/n_pert_cells) * (1/mu + 1/theta), so any
-# covariate model of power needs the gene's dispersion as well as its expression. Only
+# WHY HERE. The test statistic's variance goes as SE^2 ~ (1/n_pert_cells) * (1/mu + 1/theta), so an
+# analytical power estimate (PerturbPlan's closed form) needs the gene's dispersion as well as its
+# expression. Only
 # `average_expression_all_cells` reaches this table through the per-simulation output, so every such
 # analysis has had to load a 16 MB sim_input.rds to find the other half. Joining it here costs one
 # read and makes the summary self-sufficient.

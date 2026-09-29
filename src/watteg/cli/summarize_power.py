@@ -19,11 +19,11 @@ yields a *larger* effect size -- the direction inverts:
 For "this pair was powered well enough that a null result means something", the
 conservative edge is the one to use.
 
-`--sim-input` joins each gene's dispersion and normalised mean. The theory
-behind the power curve is `SE^2 ~ (1/n_pert_cells)(1/mu + dispersion)`, so any
-covariate model of power needs both, and only the expression reaches this table
-through the simulation output. Joining here costs one read; emitting it per
-replicate would have cost a re-run of the sweep.
+`--sim-input` joins each gene's dispersion and normalised mean. The test
+statistic's variance goes as `SE^2 ~ (1/n_pert_cells)(1/mu + dispersion)`, so an
+analytical power estimate (PerturbPlan's closed form) needs both, and only the
+expression reaches this table through the simulation output. Joining here costs
+one read; emitting it per replicate would have cost a re-run of the sweep.
 """
 
 from __future__ import annotations

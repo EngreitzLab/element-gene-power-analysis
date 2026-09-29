@@ -941,20 +941,12 @@ published since. This one happened to come back clean; the next one may not. Pin
 their locked versions would make future re-solves honest, and is worth doing before the next
 dependency change rather than during one.
 
-### Step 11 — fit the power curve and run three effect sizes instead of six
+### Step 11 — fit the power curve (removed)
 
-`src/fit_power_curve.R` fits each pair's power curve so a sweep needs three effect sizes rather
-than six, and makes the minimum detectable effect size continuous rather than snapped to whichever
-effect sizes were run. Usage is in [Usage]({{ site.baseurl }}{% link usage.md %}); the model is
-derived in [Methods]({{ site.baseurl }}{% link methods.md %}).
-
-**The validation — whether three points really do reproduce six, the covariate model that predicts
-the curve for pairs never simulated, and the calibrated prediction intervals — moved to
-[broadinstitute/WattEG-paper](https://github.com/broadinstitute/WattEG-paper) on 2026-09-04**, with
-the rest of the paper analyses. Short version of what it established, so a pipeline user knows what
-the feature is worth: the best three-point design reproduced the six-point per-pair MDES for 92.0 %
-of pairs on `day0`, against a reference whose own bootstrapped self-agreement was 91.4 %. Grid
-placement is dataset-specific and a one-effect-size pilot is enough to choose it.
+`src/fit_power_curve.R` fitted each pair's power curve so a sweep could run three effect sizes
+rather than six. It was removed on 2026-09-28, with the rest of the project's own power model:
+the analytical estimate is PerturbPlan's closed form (`pysceptre.analytical_power`), and the
+simulation stays the reference. The fit and its validation are in git history.
 
 ## Running the comparisons on the cluster
 
