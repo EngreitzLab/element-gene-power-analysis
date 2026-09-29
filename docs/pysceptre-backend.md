@@ -45,7 +45,8 @@ them needs R.
 | `src/run_power_simulation.R` + `lib/simulate.R` + `lib/pert_input.R` | **ported to Python**; the NB draw, guide-to-guide variability, centering and seeding are WattEG's method and stay in WattEG (§6) |
 | `src/consolidate_replicates.R` | ported (pyarrow) |
 | `src/compute_power.R` + `lib/stats.R` | ported (Wilson interval) |
-| `src/summarize_power.R`, `src/fit_power_curve.R` | ported |
+| `src/summarize_power.R` | ported |
+| `src/fit_power_curve.R` | **deleted** (2026-09-28): the analytical estimate is PerturbPlan's closed form, `pysceptre.analytical_power` |
 | `patches/`, `lib/apply_patch.R`, `src/check_sceptre_api.R`, `src/install_sceptre.R`, `src/install_ondisc.R`, `src/audit_dependencies.R` | **deleted.** All six exist only because the pipeline reaches into unexported sceptre S4 slots and patches its CRT path |
 | `lib/sceptre_io.R` | **deleted from the pipeline**; its odm-materialisation logic moves to the one-off export (§4) |
 | `src/make_test_data.R` | ported, or replaced by a synthetic fixture generated in Python |
@@ -655,8 +656,8 @@ one stage with an absolute bar rather than a relative one.
    `compute_power` and `summarize_power`, checked against R **on identical input**, which makes
    them exact comparisons rather than statistical ones: every column agrees to machine epsilon,
    in R's column order. The comparison caught `max_effect_size_tested` missing entirely and the
-   per-gene columns sitting in the wrong place. `fit_power_curve` is **not** ported — it serves
-   the paper's reduced-design study rather than the pipeline, and nothing in the DAG calls it.
+   per-gene columns sitting in the wrong place. `fit_power_curve` was not ported, and was
+   deleted on 2026-09-28; nothing in the DAG called it.
 6. **Nextflow rewiring** — done: `FIT_NULL_MODELS` and `MERGE_NULL_MODELS` are gone, the six
    remaining processes call the `watteg-*` entry points, the samplesheet column is `dataset`
    (a `.h5mu`) rather than `sceptre_object`, and `pixi.toml` holds no R. **Still open: the new
@@ -825,8 +826,10 @@ figure always clears the 4 GB floor), while the 1,000 Python cis tasks peaked at
 The largest, simulating from `exp(X . beta)`, has been taken; the other two are judgement calls
 about which cells and which estimator belong, and both change every published number.
 
-**One thing deliberately not ported.** `fit_power_curve.R` serves the paper's reduced-design study
-rather than the pipeline, and nothing in the DAG calls it. It stays in R.
+**One thing not ported, and since deleted.** `fit_power_curve.R` fitted a per-pair probit power
+curve for the paper's reduced-design study; nothing in the DAG called it. It was removed on
+2026-09-28: the analytical estimate is PerturbPlan's closed form (`pysceptre.analytical_power`),
+and the simulation stays the reference.
 
 **The synthetic fixture.** `src/make_test_data.R` produces a sceptre object; the Python path needs
 a `.h5mu`, so `assets/samplesheet_synthetic.csv` points at a file nothing generates yet. The stub
